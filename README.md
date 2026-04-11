@@ -1,20 +1,66 @@
 # Deliberation Studio
 
+**A multi-AI debate and decision-support engine for real questions.**
+
 [English](#english) | [中文](#中文)
 
-Deliberation Studio is a multi-AI debate and decision-support web app for everyday users.
+![Open Source](https://img.shields.io/badge/Open%20Source-Yes-1f6feb)
+![Next.js](https://img.shields.io/badge/Built%20with-Next.js-111111)
+![BYOK](https://img.shields.io/badge/API%20Mode-Bring%20Your%20Own%20Key-0f766e)
+![Bilingual](https://img.shields.io/badge/Language-English%20%2F%20中文-a855f7)
 
-Instead of talking to only one model, you can let multiple AIs discuss the same question from different angles, compare their reasoning, check web evidence, and get a final summary that is much easier to read than a raw chat log.
+Deliberation Studio helps people compare viewpoints, stress-test ideas, and make better decisions by letting multiple AIs discuss the same question in a structured, readable way.
 
-## Highlights
+Instead of opening five separate chat windows and manually comparing answers, you can ask one question, choose one or more models, and watch them debate, challenge, verify, and summarize.
 
-- Multi-AI discussion with OpenAI, Claude, Gemini, DeepSeek, and Grok
-- Single-model multi-persona mode when you only have one API key
-- Four discussion types: Conclusion, Analysis, Research, and Entertainment
-- Native search and external search augmentation
-- Beginner mode for fast setup, Pro mode for deeper control
-- Chinese and English interface
-- Export discussion logs as CSV, TXT, or JSON
+## Why this project is different
+
+- It is built for **decision support**, not just generic chat.
+- It supports **multiple providers**: OpenAI, Claude, Gemini, DeepSeek, and Grok.
+- It also supports **single-model multi-persona discussion**, so one API key is enough to simulate multiple viewpoints.
+- It gives you **structured discussion logs**, not just a messy transcript.
+- It supports **web search enhancement** for freshness and verification.
+- It is designed for **normal users**, not only developers.
+
+## What you can do with it
+
+- Compare how different models respond to the same question
+- Simulate multiple viewpoints with a single model
+- Turn a fuzzy question into a clearer recommendation
+- Explore trade-offs before making a real-life choice
+- Export debate logs for later review or research
+
+## Core features
+
+- Multi-AI debate with OpenAI, Claude, Gemini, DeepSeek, and Grok
+- Single-model multi-persona mode
+- Four discussion types:
+  - Conclusion
+  - Analysis
+  - Research
+  - Entertainment
+- Native and external web search enhancement
+- Beginner mode and Pro mode
+- Chinese and English UI
+- CSV / TXT / JSON export
+
+## Who this is for
+
+- People comparing options before making a decision
+- Researchers who want a discussion log instead of a single answer
+- Creators exploring different styles or arguments
+- Non-technical users who still want serious multi-model comparison
+
+## Try it
+
+- Local run: follow the quick-start steps below
+- Public demo: deploy your own copy on Vercel in a few minutes
+
+If you are publishing this project on GitHub, the best experience is:
+
+1. Put this repo on GitHub  
+2. Deploy it on Vercel  
+3. Share the live link in this README  
 
 ---
 
@@ -22,24 +68,42 @@ Instead of talking to only one model, you can let multiple AIs discuss the same 
 
 ### What this project is
 
-This is not just an API playground for developers.
+Deliberation Studio is a web app for multi-AI discussion, structured comparison, and decision support.
 
-It is a decision-support product for normal users who want help comparing viewpoints, stress-testing ideas, and understanding disagreement before making a choice.
+It is **not** just an API playground for developers.
 
-You ask one question, choose one or more models, and let them debate. The app then gives you:
+It is designed for people who want to:
 
-- a readable round-by-round discussion
-- search notes and source links
-- a judge summary
-- exportable logs for later review
+- compare disagreement clearly
+- see how different models reason
+- test assumptions
+- get a final summary they can actually use
 
-### Core use cases
+### How it works
 
-- Compare how different model providers think about the same problem
-- Simulate multiple viewpoints even if you only have one API key
-- Explore trade-offs before making a decision
-- Collect debate records for research or review
-- Turn a vague question into a clearer conclusion
+1. Enter one question
+2. Choose one or more models, or use one model with multiple personas
+3. Start the discussion and read the final summary
+
+### Discussion modes
+
+- **Conclusion**: best when you want a clearer final recommendation
+- **Analysis**: best when multiple options may remain valid depending on the scenario
+- **Research**: best when you want continued verification, challenge, and evidence gathering
+- **Entertainment**: best when you want a more dramatic, playful debate style
+
+### Why “single-model multi-persona” matters
+
+Even if you only have one API key, you can still run a meaningful discussion.
+
+The same model can play different roles, such as:
+
+- a balanced evaluator
+- a skeptic
+- a pragmatic planner
+- a risk-averse critic
+
+This makes the app useful even for low-cost personal use.
 
 ### Beginner guide: what “Global Configuration” means
 
@@ -49,38 +113,34 @@ That area is called **Global Configuration**. It means:
 
 - you enter a provider API key once
 - you enter that provider Base URL once
-- below that, every debater card and judge card only needs to choose the provider and model variant
+- below that, each debater or judge card only chooses provider + model variant
 
 You do **not** need to paste the same key into every card.
 
 Example:
 
-- You fill in your OpenAI key once at the top
-- Then below, you can switch between `gpt-5.4-mini` and another OpenAI model without entering the key again
-
-This is simpler, safer, and much less error-prone.
+- Fill in your OpenAI key once at the top
+- Then below, switch between `gpt-5.4-mini` and another OpenAI variant without entering the key again
 
 ### Beginner guide: what “Base URL” means
 
 Base URL means: **where the app sends your API request**.
 
-There are two common situations:
+Two common cases:
 
 1. You bought API access directly from the official provider  
-   In this case, you usually keep the official default Base URL.
+   Usually you keep the official default Base URL.
 
-2. You bought your key from a relay or proxy platform  
-   In this case, you **must** replace the Base URL with the relay address they gave you.
+2. You bought your key from a relay or proxy service  
+   You **must** replace Base URL with the relay address they gave you.
 
-If you forget to do that, you may see errors like:
+If you forget this, you may see errors such as:
 
 - invalid API key
 - model not found
 - unsupported parameter
 
 #### Example: OhMyGPT relay
-
-If your key comes from OhMyGPT, a common Base URL is:
 
 ```txt
 https://api.ohmygpt.com/v1
@@ -93,9 +153,9 @@ Simple rule:
 
 ### Security warning
 
-- This project is meant to run in your own browser or local environment.
-- Your keys stay under your control, but they are still sensitive.
-- Never post screenshots that show your API keys.
+- This project is designed to run in your own browser or local environment.
+- Your keys remain under your control, but they are still sensitive.
+- Never share screenshots that show your API keys.
 - Never upload `.env.local` to GitHub.
 - Only upload `.env.example`.
 
@@ -103,13 +163,13 @@ Simple rule:
 
 #### Windows
 
-1. Install [Node.js](https://nodejs.org/) version 20 or newer.
-2. Download or clone this project.
-3. In the project folder, copy `.env.example`.
-4. Rename the copy to `.env.local`.
-5. Open `.env.local` with Notepad or another editor.
-6. Fill in your real API keys and Base URLs.
-7. Open PowerShell in the project folder.
+1. Install [Node.js](https://nodejs.org/) version 20 or newer
+2. Download or clone this repository
+3. Copy `.env.example`
+4. Rename the copy to `.env.local`
+5. Open `.env.local`
+6. Fill in your own API keys and Base URLs
+7. Open PowerShell in the project folder
 8. Run:
 
 ```bash
@@ -117,7 +177,7 @@ npm install
 npm run dev
 ```
 
-9. Open your browser and visit:
+9. Open:
 
 ```txt
 http://localhost:3000
@@ -138,8 +198,6 @@ http://localhost:3000
 
 ### Example `.env.local`
 
-Copy `.env.example` to `.env.local`, then fill in what you actually use.
-
 ```env
 OPENAI_API_KEY=your_openai_key
 OPENAI_BASE_URL=https://api.ohmygpt.com/v1
@@ -157,6 +215,15 @@ XAI_API_KEY=your_xai_key
 XAI_BASE_URL=https://api.x.ai/v1
 ```
 
+### Provider support
+
+- OpenAI / GPT
+- Anthropic / Claude
+- Google / Gemini
+- DeepSeek
+- xAI / Grok
+- Third-party OpenAI-compatible gateways
+
 ### Easy deployment to Vercel
 
 You do **not** need to buy a server to put this online.
@@ -170,26 +237,15 @@ The easiest option for most people is [Vercel](https://vercel.com/).
 
 #### Simple flow
 
-1. Upload this project to your own GitHub repository.
-2. Go to [Vercel](https://vercel.com/).
-3. Sign in with GitHub.
-4. Click **Add New Project**.
-5. Choose your GitHub repository.
-6. Add your environment variables in Vercel.
-7. Click **Deploy**.
+1. Upload this project to your own GitHub repository
+2. Go to [Vercel](https://vercel.com/)
+3. Sign in with GitHub
+4. Click **Add New Project**
+5. Choose your GitHub repository
+6. Configure environment variables if your deployment mode needs them
+7. Click **Deploy**
 
-Vercel usually detects this as a Next.js project automatically, so you do not need to rent or configure a server by hand.
-
-After deployment:
-
-- you get your own website URL
-- future GitHub updates can redeploy automatically
-
-### “Deploy to Vercel” tip
-
-If you want a one-click deployment page later, you can add a Vercel button to your own public repository page after publishing the repo.
-
-For most beginners, the manual flow above is already the easiest path.
+Vercel usually detects this as a Next.js project automatically.
 
 ### Helpful commands
 
@@ -206,25 +262,55 @@ npm run build
 
 ### 这是什么项目
 
-这不是一个只给程序员测试 API 的工具。
+思辨剧场是一个面向普通用户的 **多 AI 辩论与深度决策辅助引擎**。
 
-它更像一个“多 AI 辩论与深度决策辅助引擎”，适合普通用户把同一个问题交给多个 AI 从不同角度讨论，再由系统帮你整理重点、分歧和结论。
+它不是一个单纯给程序员测试 API 的面板，而是一个帮助你：
 
-你只需要输入一个问题，选择一个或多个模型，就可以看到：
+- 比较不同观点
+- 看清争议点
+- 查证信息
+- 得到更清晰总结
 
-- 一轮一轮可读的讨论过程
-- 联网搜索说明和来源链接
-- 裁判总结
-- 可导出的完整记录
+的网页产品。
 
-### 核心特色
+你输入一个问题后，可以让多个 AI 一起讨论，也可以让同一个 AI 扮演多个不同人格，最后得到一份比普通聊天记录更清楚、更容易使用的结果。
 
-- 支持 OpenAI、Claude、Gemini、DeepSeek、Grok
-- 支持“单模型多人格”模拟讨论
-- 支持定论 / 分析 / 研究 / 娱乐四种讨论类型
-- 支持原生搜索与外部搜索增强
-- 支持新手模式与专业模式
-- 支持中文 / English 双语界面
+### 它和普通聊天工具有什么不同
+
+- 它更强调“**辅助决策**”，不是只陪你聊天
+- 它支持“**多模型对比**”
+- 它支持“**单模型多人格讨论**”
+- 它会给你“**结构化讨论过程**”和“**最终总结**”
+- 它支持“**联网查证**”
+- 它的界面是按普通用户来设计的，不是开发者控制台
+
+### 你可以拿它做什么
+
+- 比较不同模型对同一个问题的看法
+- 在只有一个 API key 的情况下模拟多角度讨论
+- 在做决定前先看清利弊和分歧
+- 保存讨论记录，后续复盘或研究
+- 把一个模糊问题变成更明确的建议
+
+### 四种讨论类型
+
+- **定论**：适合希望得到更明确建议
+- **分析**：适合接受“不同场景下答案不同”
+- **研究**：适合持续查证、反驳、验证
+- **娱乐**：适合更有戏剧感、更有趣的人设讨论
+
+### 为什么“单模型多人格”很重要
+
+就算你只有一个 API key，也依然能用这个项目。
+
+因为系统可以让同一个模型分别扮演：
+
+- 最均衡的分析者
+- 怀疑主义者
+- 务实执行者
+- 风险厌恶型角色
+
+这样即使低成本使用，也能看到多角度讨论。
 
 ### 什么是“全局配置”
 
@@ -234,17 +320,15 @@ npm run build
 
 - 每家厂商的 API Key 只需要填一次
 - 每家厂商的 Base URL 只需要填一次
-- 下面的辩手卡片和裁判卡片只负责选“用哪家模型、哪个变体”
+- 下面的辩手卡片和裁判卡片只负责选择“用哪家模型、哪个变体”
 
-你**不需要**每加一个辩手，就把同一个 Key 再粘贴一遍。
+你**不需要**每加一个角色，就重新粘贴一遍同样的 Key。
 
-举个最简单的例子：
+举个例子：
 
 - 你在顶部填好了 OpenAI 的 Key
-- 下面无论你切换 `gpt-5.4-mini` 还是别的 OpenAI 变体
-- 都会自动复用同一套连接配置
-
-这样更省事，也更不容易填错。
+- 下面切换不同 GPT 变体时
+- 会自动复用同一套连接配置
 
 ### 什么是 Base URL
 
@@ -252,10 +336,10 @@ Base URL 可以理解成：“请求到底发到哪里去”。
 
 最常见有两种情况：
 
-1. 你直接在官方平台买的 API  
-   一般用默认官方地址，不需要改。
+1. 你直接在官方平台购买 API  
+   一般保持默认官方地址即可。
 
-2. 你是在第三方中转站买的 Key  
+2. 你是在第三方中转站购买的 Key  
    这种情况你**必须**把 Base URL 改成中转站给你的代理地址。
 
 如果不改，程序就可能报：
@@ -266,36 +350,34 @@ Base URL 可以理解成：“请求到底发到哪里去”。
 
 #### 例子：OhMyGPT
 
-如果你的 Key 是在 OhMyGPT 之类的中转平台购买的，常见写法就是：
-
 ```txt
 https://api.ohmygpt.com/v1
 ```
 
-你可以这样记：
+一句话记忆：
 
 - 官方买的 Key -> 通常配官方 Base URL
 - 中转站买的 Key -> 通常配中转站 Base URL
 
 ### 安全提醒
 
-- 这个工具默认是在你自己的浏览器 / 本地环境中运行。
-- 你的 Key 依然非常敏感，绝对不要截图发给别人。
-- 绝对不要把 `.env.local` 上传到 GitHub。
-- 开源仓库里只保留 `.env.example` 就够了。
+- 这个项目默认在你自己的浏览器 / 本地环境中运行
+- 你的 Key 很敏感，绝对不要截图发给别人
+- 绝对不要把 `.env.local` 上传到 GitHub
+- 开源仓库里只保留 `.env.example`
 
 ### 小白本地启动指南
 
-#### Windows 用户
+#### Windows
 
-1. 先安装 [Node.js](https://nodejs.org/) 20 或更高版本。
-2. 下载或克隆本项目。
-3. 在项目根目录里找到 `.env.example`。
-4. 复制一份，重命名为 `.env.local`。
-5. 用记事本打开 `.env.local`。
-6. 把你自己的 Key 和 Base URL 填进去。
-7. 在项目文件夹空白处打开 PowerShell。
-8. 输入：
+1. 安装 [Node.js](https://nodejs.org/) 20 或更高版本
+2. 下载或克隆本项目
+3. 把 `.env.example` 复制一份
+4. 重命名为 `.env.local`
+5. 打开 `.env.local`
+6. 填入你自己的 API key 和 Base URL
+7. 在项目文件夹打开 PowerShell
+8. 运行：
 
 ```bash
 npm install
@@ -308,7 +390,7 @@ npm run dev
 http://localhost:3000
 ```
 
-#### macOS / Linux 用户
+#### macOS / Linux
 
 ```bash
 npm install
@@ -322,8 +404,6 @@ http://localhost:3000
 ```
 
 ### `.env.local` 示例
-
-把 `.env.example` 复制成 `.env.local` 后，可以像这样填写：
 
 ```env
 OPENAI_API_KEY=你的_OpenAI_Key
@@ -342,9 +422,18 @@ XAI_API_KEY=你的_Grok_Key
 XAI_BASE_URL=https://api.x.ai/v1
 ```
 
+### 支持的模型来源
+
+- OpenAI / GPT
+- Anthropic / Claude
+- Google / Gemini
+- DeepSeek
+- xAI / Grok
+- 兼容 OpenAI 的第三方中转或网关
+
 ### 最适合小白的免费部署方式：Vercel
 
-如果你不想买服务器，也不想自己配后端，最简单的办法就是部署到 [Vercel](https://vercel.com/)。
+如果你不想买服务器，也不想自己折腾部署，最简单的办法就是 [Vercel](https://vercel.com/)。
 
 #### 你需要准备
 
@@ -353,28 +442,15 @@ XAI_BASE_URL=https://api.x.ai/v1
 
 #### 最简单流程
 
-1. 先把这个项目上传到你自己的 GitHub 仓库。
-2. 打开 [Vercel](https://vercel.com/)。
-3. 用 GitHub 登录。
-4. 点击 **Add New Project**。
-5. 选择你刚上传的 GitHub 仓库。
-6. 在 Vercel 里填好环境变量。
-7. 点击 **Deploy**。
+1. 把这个项目上传到你自己的 GitHub 仓库
+2. 打开 [Vercel](https://vercel.com/)
+3. 用 GitHub 登录
+4. 点击 **Add New Project**
+5. 选择你的 GitHub 仓库
+6. 如果你的部署方式需要环境变量，再去填写
+7. 点击 **Deploy**
 
-Vercel 一般会自动识别这是一个 Next.js 项目，所以通常不需要你自己买服务器或手动配环境。
-
-部署完成后：
-
-- 你会得到一个属于自己的网页地址
-- 以后只要更新 GitHub，Vercel 还可以自动重新部署
-
-### “一键部署到 Vercel”怎么理解
-
-很多开源项目会在仓库首页提供一个“Deploy to Vercel”按钮。
-
-你发布到 GitHub 之后，也可以再加这个按钮。
-
-但对大多数零基础用户来说，按上面的步骤在 Vercel 后台点几下，其实已经是最省心的方式了。
+Vercel 一般会自动识别这是一个 Next.js 项目。
 
 ### 常用命令
 
@@ -384,3 +460,11 @@ npm run lint
 npm run test
 npm run build
 ```
+
+---
+
+## Suggested GitHub topics
+
+If you want more discoverability on GitHub, add these repository topics:
+
+`ai`, `llm`, `multi-agent`, `debate`, `decision-support`, `nextjs`, `openai`, `anthropic`, `gemini`, `deepseek`, `grok`
