@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildSearchFailureMessage, parseStructuredTurnText, tryParseJsonLike } from "@/lib/structured-output";
+import {
+  buildSearchFailureMessage,
+  normalizeFreeTextFinalReport,
+  normalizeReadableDebaterTurn,
+  parseStructuredTurnText,
+  tryParseJsonLike,
+} from "@/lib/structured-output";
 import type { ParticipantConfig } from "@/types/debate";
 
 const deepseekParticipant: ParticipantConfig = {
@@ -18,44 +24,44 @@ const deepseekParticipant: ParticipantConfig = {
 };
 
 describe("structured output parsing", () => {
-  it("parses standard json", () => {
-    const parsed = parseStructuredTurnText(
-      '{"position":"support","keyReason":"A","evidence":"B","responseToOthers":"C","interimConclusion":"D"}',
-    );
-    expect(parsed.keyReason).toBe("A");
+  it("parses standard json when a model still returns it", () => {
+    const parsed = parseStructuredTurnText('{"position":"support","message":"A natural paragraph answer."}');
+    expect(parsed.message).toBe("A natural paragraph answer.");
     expect(parsed.position).toBe("support");
   });
 
   it("repairs near-json with unquoted keys", () => {
-    const parsed = tryParseJsonLike<{ keyReason: string }>("{keyReason:'hello',}");
-    expect(parsed?.keyReason).toBe("hello");
+    const parsed = tryParseJsonLike<{ message: string }>("{message:'hello',}");
+    expect(parsed?.message).toBe("hello");
   });
 
-  it("extracts labeled free text", () => {
-    const parsed = parseStructuredTurnText(
-      "Position: oppose\nReason: Too costly\nEvidence: Budget pressure\nResponse: It ignores timing\nInterim conclusion: Wait for now",
-    );
+  it("extracts labeled free text when present", () => {
+    const parsed = parseStructuredTurnText("Position: oppose\nMessage: This is the main reply.");
     expect(parsed.position).toBe("oppose");
-    expect(parsed.evidence).toContain("Budget");
+    expect(parsed.message).toContain("main reply");
   });
 
-  it("parses moderator-style json without exposing raw objects", () => {
-    const parsed = parseStructuredTurnText('{"message":"Stay neutral and answer the strongest objection.","needsCorrection":true}');
-    expect(parsed.message).toContain("Stay neutral");
-    expect(parsed.needsCorrection).toBe(true);
-  });
-
-  it("parses nested moderator payloads without duplicate wrappers", () => {
-    const parsed = parseStructuredTurnText(
-      '{"moderator":{"message":"Focus on evidence quality, not tone.","needsCorrection":false}}',
+  it("keeps natural debater text intact instead of inventing fallback warnings", () => {
+    const normalized = normalizeReadableDebaterTurn(
+      "I still support this plan because the cost is manageable and the rollout can be staged.",
+      "support",
     );
-    expect(parsed.message).toBe("Focus on evidence quality, not tone.");
-    expect(parsed.needsCorrection).toBe(false);
+
+    expect(normalized.currentPosition).toBe("support");
+    expect(normalized.content).toContain("I still support this plan");
+    expect(normalized.evidence).toBe("");
+  });
+
+  it("turns free-text final reports into readable summaries without debug wording", () => {
+    const report = normalizeFreeTextFinalReport("Overall, the safer choice is to wait for more evidence.");
+    expect(report.rawText).toContain("safer choice");
+    expect(report.shortConclusion).toContain("safer choice");
+    expect(report.uncertainty).toBe("");
   });
 
   it("builds product-style DeepSeek fallback search text", () => {
     const message = buildSearchFailureMessage("zh", deepseekParticipant);
     expect(message).toContain("DeepSeek");
-    expect(message).toContain("第三方搜索");
+    expect(message).toContain("第三方搜索增强");
   });
 });

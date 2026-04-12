@@ -1,4 +1,4 @@
-import { z } from "zod";
+﻿import { z } from "zod";
 import { sanitizeModelText } from "@/lib/citations";
 import { getPersonaPreset } from "@/lib/persona-presets";
 import { sideLabel } from "@/lib/provider-catalog";
@@ -8,11 +8,10 @@ import { shouldCreateSharedSearch, shouldUseNativeSearch } from "@/lib/search-st
 import {
   buildJudgeReadableSummary,
   buildModeratorFallback,
-  buildParticipantFallbacks,
-  buildReadableParticipantBody,
   buildSearchFailureMessage,
   buildSummaryGuidance,
-  buildTurnDisplaySections,
+  normalizeFreeTextFinalReport,
+  normalizeReadableDebaterTurn,
   parseStructuredTurnText,
   tryParseJsonLike,
 } from "@/lib/structured-output";
@@ -265,10 +264,7 @@ function buildTranscriptSnippet(transcript: DebateTurn[]) {
       (turn) =>
         `[Round ${turn.round}][${turn.phase}] ${turn.speaker} (${turn.roleName})\n` +
         `Stance: ${turn.currentPosition ?? "neutral"}\n` +
-        `Core point: ${turn.keyReason}\n` +
-        `Evidence: ${turn.evidence}\n` +
-        `Response: ${turn.responseToOthers}\n` +
-        `Interim conclusion: ${turn.interimConclusion}`,
+        `${turn.content}`,
     )
     .join("\n\n");
 }
@@ -380,7 +376,7 @@ function moderatorPrompt(config: DebateConfig, transcript: DebateTurn[], rolling
     discussionTypeInstruction(config),
     rollingSummary?.trim() ? `Earlier summary:\n${rollingSummary.trim()}` : "",
     `Recent discussion:\n${buildTranscriptSnippet(transcript)}`,
-    'Prefer JSON: {"message":"...","needsCorrection":true|false}. If needed, short plain text is acceptable.',
+    "Reply in short natural text. Do not output raw JSON, protocol text, or field labels.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -400,7 +396,9 @@ function scorePrompt(config: DebateConfig, transcript: DebateTurn[], rollingSumm
       : "",
     rollingSummary?.trim() ? `Earlier summary:\n${rollingSummary.trim()}` : "",
     `Recent discussion:\n${buildTranscriptSnippet(transcript)}`,
-    'Return JSON: {"supportWinRate":0-100,"opposeWinRate":0-100,"leadingSide":"support|oppose|neutral","shouldStop":true|false,"rationale":"..."}',
+    "Reply in natural text.",
+    "You must clearly state support win rate and oppose win rate as percentages, then briefly explain why.",
+    "Do not output raw JSON, protocol text, or developer-oriented field labels.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -426,7 +424,9 @@ function judgePrompt(config: DebateConfig, transcript: DebateTurn[], rollingSumm
     summaryGuidance.instructions,
     rollingSummary?.trim() ? `Earlier summary:\n${rollingSummary.trim()}` : "",
     `Full discussion:\n${buildTranscriptSnippet(transcript)}`,
-    'Return JSON: {"shortConclusion":"...","detailedConclusion":"...","comparison":[{"speaker":"...","roleName":"...","stance":"...","reasoningStyle":"...","strongestPoint":"..."}],"uncertainty":"...","howToReadDisagreement":"..."}',
+    "Write a readable final summary in natural paragraphs.",
+    "Include a concise conclusion, a fuller explanation, any remaining uncertainty, and guidance on how the user should interpret disagreement.",
+    "Do not output raw JSON, protocol text, or developer-oriented field labels.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -442,21 +442,7 @@ function normalizeParticipantTurn(
   searchEvidence: SearchEvidence | null,
 ): DebateTurn {
   const fallbackPosition = participant.stance === "free" ? "neutral" : participant.stance;
-  const parsed = parseStructuredTurnText(rawText);
-  const cleanText = sanitizeModelText(rawText);
-  const fallback = buildParticipantFallbacks(config.locale, cleanText, citations.length, Boolean(searchEvidence?.failed));
-  const keyReason = parsed.keyReason?.trim() || fallback.keyReason;
-  const evidence = parsed.evidence?.trim() || fallback.evidence;
-  const responseToOthers = parsed.responseToOthers?.trim() || fallback.responseToOthers;
-  const interimConclusion = parsed.interimConclusion?.trim() || fallback.interimConclusion;
-  const displaySections = buildTurnDisplaySections(config.locale, {
-    phase,
-    currentPosition: parsed.position || fallbackPosition,
-    keyReason,
-    evidence,
-    responseToOthers,
-    interimConclusion,
-  });
+  const normalized = normalizeReadableDebaterTurn(rawText, fallbackPosition);
 
   return {
     id: crypto.randomUUID(),
@@ -465,13 +451,12 @@ function normalizeParticipantTurn(
     roleName: participant.roleName,
     phase,
     round,
-    currentPosition: parsed.position || fallbackPosition,
-    keyReason,
-    evidence,
-    responseToOthers,
-    interimConclusion,
-    content: buildReadableParticipantBody(config.locale, { displaySections }),
-    displaySections,
+    currentPosition: normalized.currentPosition,
+    keyReason: normalized.keyReason,
+    evidence: normalized.evidence,
+    responseToOthers: normalized.responseToOthers,
+    interimConclusion: normalized.interimConclusion,
+    content: normalized.content,
     citations,
     searchSummary: searchEvidence?.failed
       ? buildSearchFailureMessage(config.locale, participant, searchEvidence.failureReason)
@@ -515,18 +500,14 @@ function normalizeEvaluation(rawText: string, threshold: number): RoundEvaluatio
 
 function normalizeFinalReport(rawText: string): FinalReport {
   const parsed = tryParseJsonLike<FinalReport>(rawText);
-  if (parsed) return parsed;
+  if (parsed) {
+    return {
+      ...parsed,
+      rawText: sanitizeModelText(rawText),
+    };
+  }
 
-  const clean = sanitizeModelText(rawText);
-  const quickLine = clean.split(/\n+/).map((line) => line.trim()).find(Boolean);
-
-  return {
-    shortConclusion: quickLine || "A concise conclusion was not returned in strict structured format.",
-    detailedConclusion: clean || "The final judge step returned very little readable content.",
-    comparison: [],
-    uncertainty: "This final answer was closer to free text, so some structured comparison fields may be incomplete.",
-    howToReadDisagreement: "Compare differences in assumptions, evidence quality, and trade-offs instead of treating the result as a simple winner-loser output.",
-  };
+  return normalizeFreeTextFinalReport(rawText);
 }
 
 function buildSearchQuery(config: DebateConfig, participant: ParticipantConfig, transcript: DebateTurn[], rollingSummary?: string) {
@@ -574,18 +555,18 @@ async function resolveSearchEvidence(
   if (config.search.mode === "shared_once") {
     if (!config.search.continuePerRound) return sharedSearch;
     if (supportsNativeSearch) return sharedSearch;
-    const supplement = await performSearch(query, config.search.tavilyApiKey);
+    const supplement = await performSearch(query, config.search.tavilyApiKey, config.topic);
     return mergeSearchEvidence(sharedSearch, supplement);
   }
 
   if (config.search.mode === "per_participant") {
     if (supportsNativeSearch) return null;
-    return performSearch(query, config.search.tavilyApiKey);
+    return performSearch(query, config.search.tavilyApiKey, config.topic);
   }
 
   if (config.search.mode === "hybrid") {
     if (supportsNativeSearch) return sharedSearch;
-    const independent = await performSearch(query, config.search.tavilyApiKey);
+    const independent = await performSearch(query, config.search.tavilyApiKey, config.topic);
     return mergeSearchEvidence(sharedSearch, independent);
   }
 
@@ -597,7 +578,7 @@ export async function prepareDebate(raw: unknown) {
   validateConfig(config);
 
   const sharedSearch = config.search.enabled && shouldCreateSharedSearch(config.search.mode)
-    ? await performSearch(config.topic, config.search.tavilyApiKey)
+    ? await performSearch(config.topic, config.search.tavilyApiKey, config.topic)
     : null;
 
   return {
@@ -624,14 +605,6 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
 
     const parsed = parseStructuredTurnText(result.text);
     const moderatorMessage = parsed.message?.trim() || sanitizeModelText(result.text) || buildModeratorFallback(input.config.locale);
-    const moderatorSections = buildTurnDisplaySections(input.config.locale, {
-      phase: "moderator",
-      currentPosition: "neutral",
-      keyReason: moderatorMessage,
-      evidence: "",
-      responseToOthers: moderatorMessage,
-      interimConclusion: moderatorMessage,
-    });
 
     return {
       turn: {
@@ -648,8 +621,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
             : "The moderator checks topic focus, factual quality, and role consistency.",
         responseToOthers: moderatorMessage,
         interimConclusion: moderatorMessage,
-        content: buildReadableParticipantBody(input.config.locale, { displaySections: moderatorSections }),
-        displaySections: moderatorSections,
+        content: moderatorMessage,
         currentPosition: "neutral",
       },
     };
@@ -674,22 +646,10 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
         { role: "user", content: scorePrompt(input.config, input.transcript, input.rollingSummary, searchEvidence) },
       ],
       Boolean(nativeSearchForScore),
-      true,
+      false,
     );
 
     const evaluation = normalizeEvaluation(result.text, input.config.stopThreshold);
-    const scoreSections = buildTurnDisplaySections(input.config.locale, {
-      phase: "score",
-      currentPosition: "neutral",
-      keyReason: input.config.locale === "zh" ? "裁判评估" : "Judge evaluation",
-      evidence: searchEvidence?.failed
-        ? buildSearchFailureMessage(input.config.locale, participant, searchEvidence.failureReason)
-        : input.config.locale === "zh"
-          ? "基于当前讨论与可用证据进行判断。"
-          : "Judged from the transcript and available evidence.",
-      responseToOthers: evaluation.rationale,
-      interimConclusion: evaluation.rationale,
-    });
 
     return {
       turn: {
@@ -707,8 +667,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
             : "Judged from the transcript and available evidence.",
         responseToOthers: evaluation.rationale,
         interimConclusion: evaluation.rationale,
-        content: buildReadableParticipantBody(input.config.locale, { displaySections: scoreSections }),
-        displaySections: scoreSections,
+        content: sanitizeModelText(result.text) || evaluation.rationale,
         currentPosition: "neutral",
         citations: result.citations.length ? result.citations : searchEvidence?.citations,
         searchSummary: searchEvidence?.failed ? buildSearchFailureMessage(input.config.locale, participant, searchEvidence.failureReason) : searchEvidence?.summary,
@@ -727,18 +686,10 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
         { role: "user", content: judgePrompt(input.config, input.transcript, input.rollingSummary) },
       ],
       false,
-      true,
+      false,
     );
 
     const report = normalizeFinalReport(result.text);
-    const judgeSections = buildTurnDisplaySections(input.config.locale, {
-      phase: "judge",
-      currentPosition: "neutral",
-      keyReason: report.shortConclusion,
-      evidence: report.uncertainty,
-      responseToOthers: report.howToReadDisagreement,
-      interimConclusion: report.detailedConclusion,
-    });
 
     return {
       turn: {
@@ -753,7 +704,6 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
         responseToOthers: report.howToReadDisagreement,
         interimConclusion: report.detailedConclusion,
         content: buildJudgeReadableSummary(input.config.locale, report),
-        displaySections: judgeSections,
         currentPosition: "neutral",
       },
     };
@@ -832,3 +782,4 @@ export async function summarizeDebate(raw: unknown) {
     summary: sanitizeModelText(result.text),
   };
 }
+

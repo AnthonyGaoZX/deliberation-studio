@@ -30,6 +30,27 @@ function buildEvidence(summary: string, citations: Citation[], provider: SearchE
   };
 }
 
+function sanitizeSearchQuery(query: string, fallbackQuery?: string) {
+  const normalize = (value: string) =>
+    value
+      .replace(/\s+/g, " ")
+      .replace(/[`*_>#-]/g, " ")
+      .replace(/\[(.*?)\]\((.*?)\)/g, "$1 $2")
+      .trim();
+
+  const primary = normalize(query);
+  if (primary) {
+    return primary.slice(0, 200);
+  }
+
+  const fallback = normalize(fallbackQuery ?? "");
+  if (fallback) {
+    return fallback.slice(0, 200);
+  }
+
+  return "latest public information about the current debate topic";
+}
+
 export async function searchWithTavily(query: string, apiKey: string): Promise<SearchEvidence> {
   const response = await fetchWithTimeout("https://api.tavily.com/search", {
     method: "POST",
@@ -228,19 +249,21 @@ export async function searchWithDuckDuckGo(query: string): Promise<SearchEvidenc
   return searchWithDuckDuckGoHtml(query);
 }
 
-export async function performSearch(query: string, tavilyApiKey?: string): Promise<SearchEvidence> {
+export async function performSearch(query: string, tavilyApiKey?: string, fallbackQuery?: string): Promise<SearchEvidence> {
+  const sanitizedQuery = sanitizeSearchQuery(query, fallbackQuery);
+
   try {
     if (tavilyApiKey?.trim()) {
-      return await searchWithTavily(query, tavilyApiKey.trim());
+      return await searchWithTavily(sanitizedQuery, tavilyApiKey.trim());
     }
   } catch (error) {
     // continue to public fallback chain
     const reason = error instanceof Error ? error.message : "Tavily search failed";
     try {
-      return await searchWithDuckDuckGo(query);
+      return await searchWithDuckDuckGo(sanitizedQuery);
     } catch {
       try {
-        return await searchWithSearxng(query);
+        return await searchWithSearxng(sanitizedQuery);
       } catch {
         return {
           summary: "This round could not fetch fresh web results.",
@@ -255,10 +278,10 @@ export async function performSearch(query: string, tavilyApiKey?: string): Promi
   }
 
   try {
-    return await searchWithDuckDuckGo(query);
+    return await searchWithDuckDuckGo(sanitizedQuery);
   } catch (duckError) {
     try {
-      return await searchWithSearxng(query);
+      return await searchWithSearxng(sanitizedQuery);
     } catch {
       return {
         summary: "This round could not fetch fresh web results.",

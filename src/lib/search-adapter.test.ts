@@ -34,4 +34,21 @@ describe("performSearch", () => {
     expect(result.failed).toBe(false);
     expect(result.citations[0]?.title).toBe("Example Article");
   });
+
+  it("sanitizes invalid Tavily queries and falls back to the debate topic", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          answer: "Fresh result",
+          results: [{ title: "Example", url: "https://example.com", content: "snippet" }],
+        }),
+      }),
+    );
+
+    const result = await performSearch("   ", "tavily-key", "Should we launch this product?");
+    expect(result.failed).toBe(false);
+    expect(result.summary).toContain("Fresh result");
+  });
 });

@@ -41,6 +41,30 @@ describe("provider adapters", () => {
     expect(result.text).toBe("Hello world");
   });
 
+  it("extracts text from array-style chat completion content", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          choices: [
+            {
+              message: {
+                content: [
+                  { type: "text", text: "First paragraph." },
+                  { type: "text", text: "Second paragraph." },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await callProvider(participant, [{ role: "user", content: "test" }], false);
+    expect(result.text).toContain("First paragraph.");
+    expect(result.text).toContain("Second paragraph.");
+  });
+
   it("extracts nested text and citations from responses-style providers", async () => {
     const xaiParticipant: ParticipantConfig = {
       ...participant,

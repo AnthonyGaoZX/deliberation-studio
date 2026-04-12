@@ -2,6 +2,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { APP_COPY, buildHelpSnapshot, buildProviderSnapshot, t } from "@/lib/i18n";
 import { createDefaultConfig, createStarterSingleModelSetup, STORAGE_KEY } from "@/lib/default-config";
 import {
@@ -198,19 +199,11 @@ function stageLabel(stage: RunStage, locale: Locale) {
 }
 
 function TurnBody({ turn }: { turn: DebateTurn }) {
-  if (turn.displaySections?.length) {
-    return (
-      <div className="turn-sections">
-        {turn.displaySections.map((section) => (
-          <section key={`${turn.id}-${section.title}`} className="turn-section">
-            <strong>{section.title}</strong>
-            <p>{section.body}</p>
-          </section>
-        ))}
-      </div>
-    );
-  }
-  return <p>{turn.content}</p>;
+  return (
+    <div className="markdown-copy">
+      <ReactMarkdown>{turn.content}</ReactMarkdown>
+    </div>
+  );
 }
 
 function TrendChart({
@@ -2000,6 +1993,11 @@ export default function HomePage() {
                           {turn.round}
                           {locale === "zh" ? "轮" : ""}
                         </p>
+                        {turn.currentPosition ? (
+                          <p className="muted">
+                            {text(locale, "当前立场", "Current stance")}: {stanceLabel(turn.currentPosition, locale)}
+                          </p>
+                        ) : null}
                       </div>
                     </div>
                     {turn.searchSummary ? <p className={turn.searchFailed ? "score-note" : "search-note"}>{turn.searchSummary}</p> : null}

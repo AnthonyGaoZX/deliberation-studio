@@ -151,6 +151,34 @@ function collectTextParts(
     .join("\n");
 }
 
+function extractChatMessageText(content: unknown): string {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .flatMap((item) => {
+        if (typeof item === "string") return [item.trim()];
+        if (!item || typeof item !== "object") return [];
+
+        const record = item as Record<string, unknown>;
+        const text = typeof record.text === "string" ? record.text.trim() : "";
+        if (text) return [text];
+
+        if (record.type === "text" && typeof record.content === "string") {
+          return [record.content.trim()];
+        }
+
+        return [];
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return "";
+}
+
 async function callResponsesApi(
   participant: ParticipantConfig,
   messages: ChatMessage[],
@@ -376,10 +404,10 @@ async function callChatCompletion(participant: ParticipantConfig, messages: Chat
   }
 
   const data = (await safeJson(response, participant)) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: unknown } }>;
   };
 
-  const text = data.choices?.[0]?.message?.content?.trim() || "";
+  const text = extractChatMessageText(data.choices?.[0]?.message?.content);
   if (!text.trim()) {
     throw makeProviderError(participant, "The API returned successfully but no readable text was found.");
   }

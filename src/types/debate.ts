@@ -186,6 +186,7 @@ export type FinalReport = {
   }>;
   uncertainty: string;
   howToReadDisagreement: string;
+  rawText?: string;
 };
 
 export type PrepareResponse = {
