@@ -215,15 +215,56 @@ function outputLanguageInstruction(language: DebateConfig["outputLanguage"]) {
 function discussionTypeInstruction(config: DebateConfig) {
   switch (config.discussionType) {
     case "conclusion":
-      return "The final goal is a clear recommendation when evidence is strong enough.";
+      return "The final goal is a clear recommendation. Debaters should defend their assigned side assertively and avoid drifting into neutral compromise unless the evidence truly collapses.";
     case "analysis":
-      return "Do not force a single winner if different conditions lead to different best choices.";
+      return "Compare trade-offs carefully. Debaters should keep their assigned side, but may acknowledge where the other side works better under different conditions.";
     case "research":
-      return "Prioritize verification, challenge assumptions, and avoid premature convergence.";
+      return "Prioritize verification, challenge assumptions, and avoid premature convergence. In this mode, stance may evolve with evidence.";
     case "entertainment":
       return "Prioritize entertaining rhetoric and dramatic contrast while keeping arguments coherent.";
     default:
       return "Keep the discussion coherent and evidence-oriented.";
+  }
+}
+
+function modeSpecificDebaterRule(config: DebateConfig, participant: ParticipantConfig) {
+  const side = sideLabel(participant.stance, config.locale);
+
+  switch (config.discussionType) {
+    case "conclusion":
+      if (participant.stance === "free") {
+        return "Conclusion mode: choose one side for this turn and defend it clearly. Do not sound like a neutral summary writer.";
+      }
+      return `Conclusion mode: you are arguing for ${side}. Be decisive, persuasive, and side-committed. Do not hedge into a neutral middle-ground answer.`;
+    case "analysis":
+      if (participant.stance === "free") {
+        return "Analysis mode: keep a clear angle for this turn, but compare trade-offs fairly.";
+      }
+      return `Analysis mode: stay on ${side}, but explain where your side is stronger, where it is weaker, and under which conditions the other side may perform better.`;
+    case "research":
+      return "Research mode: follow the strongest evidence available right now. You may update your stance if new evidence justifies it, and you should actively test the current consensus.";
+    case "entertainment":
+      if (participant.stance === "free") {
+        return "Entertainment mode: choose a dramatic angle and make it memorable.";
+      }
+      return `Entertainment mode: stay on ${side}, heighten the drama, and make your rhetoric vivid without becoming incoherent.`;
+    default:
+      return "";
+  }
+}
+
+function modeSpecificJudgeRule(config: DebateConfig) {
+  switch (config.discussionType) {
+    case "conclusion":
+      return "In conclusion mode, you should end with a practical recommendation whenever the evidence is reasonably strong.";
+    case "analysis":
+      return "In analysis mode, preserve conditional trade-offs instead of forcing one universal winner.";
+    case "research":
+      return "In research mode, prioritize verification quality, unresolved uncertainty, and whether the group tested its own assumptions.";
+    case "entertainment":
+      return "In entertainment mode, acknowledge the most memorable rhetorical moments before giving a light practical takeaway.";
+    default:
+      return "";
   }
 }
 
@@ -317,6 +358,7 @@ function participantSystemPrompt(config: DebateConfig, participant: ParticipantC
     `You are ${participant.label}.`,
     `Role: ${participant.roleName}.`,
     stanceInstruction,
+    modeSpecificDebaterRule(config, participant),
     `Persona guidance:\n${buildPersonaPrompt(config, participant)}`,
     outputLanguageInstruction(config.outputLanguage),
     discussionTypeInstruction(config),
@@ -355,6 +397,18 @@ function participantUserPrompt(
     "Write in natural paragraphs. Do not output raw JSON, protocol text, or field labels.",
     "Your paragraph should naturally include: your stance, key reason, evidence, response to others, and interim conclusion.",
     "Do not copy shared search notes line for line. Absorb them, then answer naturally in the requested output language.",
+    config.discussionType === "conclusion"
+      ? "Push a clear recommendation for your side. You may mention limits, but do not dissolve into an undecided answer."
+      : "",
+    config.discussionType === "analysis"
+      ? "Stay persuasive for your side while still naming the conditions under which the other option becomes attractive."
+      : "",
+    config.discussionType === "research"
+      ? "Treat this as an evidence review, not a performance. Update claims when the evidence changes."
+      : "",
+    config.discussionType === "entertainment"
+      ? "Make the turn colorful and memorable, but still understandable."
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -365,6 +419,7 @@ function moderatorSystemPrompt(config: DebateConfig, participant: ParticipantCon
     "You are the neutral moderator. You never choose sides.",
     `Moderator persona guidance:\n${buildPersonaPrompt(config, participant)}`,
     outputLanguageInstruction(config.outputLanguage),
+    modeSpecificJudgeRule(config),
     participant.systemPrompt?.trim() || "",
   ]
     .filter(Boolean)
@@ -377,6 +432,7 @@ function moderatorPrompt(config: DebateConfig, transcript: DebateTurn[], rolling
     "Your job is to keep the debate factual, on-topic, and role-consistent.",
     outputLanguageInstruction(config.outputLanguage),
     discussionTypeInstruction(config),
+    modeSpecificJudgeRule(config),
     rollingSummary?.trim() ? `Earlier summary:\n${rollingSummary.trim()}` : "",
     `Recent discussion:\n${buildTranscriptSnippet(transcript)}`,
     "Reply in short natural text. Do not output raw JSON, protocol text, or field labels.",
@@ -393,6 +449,7 @@ function scorePrompt(config: DebateConfig, transcript: DebateTurn[], rollingSumm
     `Discussion type: ${config.discussionType}`,
     outputLanguageInstruction(config.outputLanguage),
     `Stop threshold: ${Math.round(config.stopThreshold * 100)}%`,
+    modeSpecificJudgeRule(config),
     searchEvidence
       ? searchEvidence.failed
         ? "Fresh web search was unavailable this round."
@@ -426,6 +483,7 @@ function judgePrompt(config: DebateConfig, transcript: DebateTurn[], rollingSumm
     `Discussion type: ${config.discussionType}`,
     outputLanguageInstruction(config.outputLanguage),
     outcomeInstruction,
+    modeSpecificJudgeRule(config),
     summaryGuidance.instructions,
     rollingSummary?.trim() ? `Earlier summary:\n${rollingSummary.trim()}` : "",
     `Full discussion:\n${buildTranscriptSnippet(transcript)}`,

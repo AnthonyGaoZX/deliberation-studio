@@ -74,6 +74,7 @@ function normalizeAsciiPunctuation(value: string) {
 
 function sanitizeApiKeyInput(value: string) {
   return normalizeAsciiPunctuation(value)
+    .replace(/[^\x21-\x7E]/g, "")
     .trim()
     .replace(/^api(?:\s|-|_)?key\s*[:：]\s*/i, "")
     .replace(/^bearer\s+/i, "")
@@ -83,6 +84,7 @@ function sanitizeApiKeyInput(value: string) {
 
 function sanitizeBaseUrlInput(value: string, provider: ProviderKind, allowEmpty = true) {
   const normalized = normalizeAsciiPunctuation(value)
+    .replace(/[^\x20-\x7E]/g, "")
     .trim()
     .replace(/^base\s*url\s*[:：]\s*/i, "");
 

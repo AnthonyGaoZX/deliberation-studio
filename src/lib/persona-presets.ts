@@ -42,7 +42,7 @@ export const PERSONA_PRESETS: PersonaPreset[] = [
     id: "aggressive_explorer",
     label: { zh: "激进尝试型", en: "Aggressive explorer" },
     summary: {
-      zh: "更愿意承担不确定性，以换取更高潜在收益。",
+      zh: "更愿意承担不确定性，以换取更高的潜在收益。",
       en: "Accepts more uncertainty in exchange for higher upside.",
     },
     defaultStance: "free",
@@ -60,7 +60,7 @@ export const PERSONA_PRESETS: PersonaPreset[] = [
     },
     defaultStance: "free",
     prompt: {
-      zh: "把讨论落到执行步骤、成本、流程和现实约束上。",
+      zh: "把讨论落到执行步骤、成本、流程和现实约束中。",
       en: "Translate ideas into execution steps, costs, process, and real-world constraints.",
     },
   },
@@ -190,7 +190,7 @@ export const PERSONA_PRESETS: PersonaPreset[] = [
     id: "objective_judge",
     label: { zh: "客观裁判（默认）", en: "Objective judge (default)" },
     summary: {
-      zh: "中立、均衡、证据优先，适合大多数场景。",
+      zh: "中立、平衡、证据优先，适合大多数场景。",
       en: "Neutral, balanced, and evidence-first for most cases.",
     },
     defaultStance: "neutral",
@@ -272,9 +272,9 @@ export const PERSONA_PRESETS: PersonaPreset[] = [
   },
   {
     id: "balanced_judge",
-    label: { zh: "平衡裁判（兼容旧配置）", en: "Balanced judge (legacy compatibility)" },
+    label: { zh: "平衡裁判（旧配置兼容）", en: "Balanced judge (legacy compatibility)" },
     summary: {
-      zh: "仅用于兼容旧配置，不在新界面展示。",
+      zh: "仅用于兼容旧配置，不在新界面显示。",
       en: "Compatibility only. Hidden from the new UI.",
     },
     defaultStance: "neutral",
@@ -289,7 +289,7 @@ export const PERSONA_PRESETS: PersonaPreset[] = [
     id: "supporter",
     label: { zh: "支持方（旧配置兼容）", en: "Supporter (legacy compatibility)" },
     summary: {
-      zh: "仅用于兼容旧配置，不在新界面展示。",
+      zh: "仅用于兼容旧配置，不在新界面显示。",
       en: "Compatibility only. Hidden from the new UI.",
     },
     defaultStance: "support",
@@ -303,7 +303,7 @@ export const PERSONA_PRESETS: PersonaPreset[] = [
     id: "opposer",
     label: { zh: "反对方（旧配置兼容）", en: "Opposer (legacy compatibility)" },
     summary: {
-      zh: "仅用于兼容旧配置，不在新界面展示。",
+      zh: "仅用于兼容旧配置，不在新界面显示。",
       en: "Compatibility only. Hidden from the new UI.",
     },
     defaultStance: "oppose",

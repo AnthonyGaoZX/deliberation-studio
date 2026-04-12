@@ -9,7 +9,7 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderMeta> = {
       en: "Strong general capability for structured discussion, summaries, and multi-round comparison.",
     },
     apiKeyHelp: {
-      zh: "前往 OpenAI 官方平台创建 API Key（外部官网）。",
+      zh: "前往 OpenAI 官方平台创建 API Key（外部网站）。",
       en: "Create an API key on the official OpenAI platform (external site).",
     },
     officialUrl: "https://openai.com",
@@ -23,7 +23,7 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderMeta> = {
         value: "gpt-5.4",
         label: "GPT-5.4",
         summary: {
-          zh: "更适合复杂分析与深度总结，通常成本更高。",
+          zh: "更适合复杂分析和深度总结，通常成本更高。",
           en: "Better for deeper analysis and richer summaries, usually at a higher cost.",
         },
       },
@@ -61,7 +61,7 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderMeta> = {
       en: "Strong for long-context understanding, nuanced writing, and conditional analysis.",
     },
     apiKeyHelp: {
-      zh: "前往 Anthropic Console 创建 API Key（外部官网）。",
+      zh: "前往 Anthropic Console 创建 API Key（外部网站）。",
       en: "Create an API key in Anthropic Console (external site).",
     },
     officialUrl: "https://www.anthropic.com",
@@ -105,7 +105,7 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderMeta> = {
       en: "Fast responses, good for synthesis, comparison, and lightweight web-assisted discussion.",
     },
     apiKeyHelp: {
-      zh: "前往 Google AI Studio 创建 API Key（外部官网）。",
+      zh: "前往 Google AI Studio 创建 API Key（外部网站）。",
       en: "Create an API key in Google AI Studio (external site).",
     },
     officialUrl: "https://ai.google.dev",
@@ -149,7 +149,7 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderMeta> = {
       en: "Supports Chat and Reasoner. In this app, live web search relies on external search augmentation.",
     },
     apiKeyHelp: {
-      zh: "前往 DeepSeek 官方平台创建 API Key（外部官网）。",
+      zh: "前往 DeepSeek 官方平台创建 API Key（外部网站）。",
       en: "Create an API key on the official DeepSeek platform (external site).",
     },
     officialUrl: "https://www.deepseek.com",
@@ -185,7 +185,7 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderMeta> = {
       en: "Supports native web search, good for fresh information checks and follow-up probing.",
     },
     apiKeyHelp: {
-      zh: "前往 xAI Console 创建 API Key（外部官网）。",
+      zh: "前往 xAI Console 创建 API Key（外部网站）。",
       en: "Create an API key in xAI Console (external site).",
     },
     officialUrl: "https://docs.x.ai/developers",

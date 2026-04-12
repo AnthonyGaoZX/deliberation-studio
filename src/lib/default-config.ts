@@ -19,8 +19,8 @@ export function createDefaultConfig(locale: Locale, appMode: AppMode = "simple")
     participants: [],
     judgeInstruction:
       locale === "zh"
-        ? "请保持中立，优先比较证据质量、推理完整性和适用条件，最后给出清晰、可读、易懂的总结。"
-        : "Stay neutral. Prioritize evidence quality, reasoning integrity, and applicability, then produce a clear readable summary.",
+        ? "请保持中立，优先比较证据质量、推理完整性和适用条件，最后给出清晰、易读、能帮助做决定的总结。"
+        : "Stay neutral. Prioritize evidence quality, reasoning integrity, and applicability, then produce a clear decision-oriented summary.",
     runtimeLimitSeconds: 180,
     search: {
       enabled: true,
@@ -50,7 +50,7 @@ export function createStarterSingleModelSetup(locale: Locale, provider: Provider
   judge.persona = "objective_judge";
   judge.personaDescription =
     locale === "zh"
-      ? "保持中立，不站队。按证据质量、适用条件和推理完整性进行总结。"
+      ? "保持中立，不站队。按照证据质量、适用条件和推理完整性来总结。"
       : "Stay neutral. Summarize based on evidence quality, applicability, and reasoning integrity.";
   judge.includeInFinalSummary = true;
 

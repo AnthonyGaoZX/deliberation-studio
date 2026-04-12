@@ -33,6 +33,7 @@ function normalizeAsciiPunctuation(value: string) {
 
 function sanitizeApiKey(apiKey: string) {
   return normalizeAsciiPunctuation(apiKey)
+    .replace(/[^\x21-\x7E]/g, "")
     .trim()
     .replace(/^api(?:\s|-|_)?key\s*[:：]\s*/i, "")
     .replace(/^bearer\s+/i, "")
@@ -42,6 +43,7 @@ function sanitizeApiKey(apiKey: string) {
 
 function sanitizeBaseUrl(baseUrl: string) {
   const normalized = normalizeAsciiPunctuation(baseUrl)
+    .replace(/[^\x20-\x7E]/g, "")
     .trim()
     .replace(/^base\s*url\s*[:：]\s*/i, "");
 
@@ -71,14 +73,31 @@ function stringifyError(error: unknown) {
   return "Unknown request error";
 }
 
-function makeProviderError(participant: ParticipantConfig, detail: string) {
-  return new Error(`${participant.label} request failed: ${detail}`);
-}
-
 function usesGatewayBaseUrl(participant: ParticipantConfig) {
   const officialHost = OFFICIAL_HOSTS[participant.provider];
   if (!officialHost) return false;
   return !getHostname(participant.baseUrl).includes(officialHost);
+}
+
+function appendRelayHint(participant: ParticipantConfig, detail: string) {
+  const normalized = detail.toLowerCase();
+  const looksLikeCredentialProblem =
+    normalized.includes("api key") ||
+    normalized.includes("x-api-key") ||
+    normalized.includes("credential") ||
+    normalized.includes("unauthorized");
+
+  if (!looksLikeCredentialProblem) return detail;
+
+  if (["openai", "anthropic", "gemini"].includes(participant.provider) && !usesGatewayBaseUrl(participant)) {
+    return `${detail} If this key comes from a relay or reseller such as OhMyGPT, also fill the provider Base URL instead of using the official default endpoint.`;
+  }
+
+  return detail;
+}
+
+function makeProviderError(participant: ParticipantConfig, detail: string) {
+  return new Error(`${participant.label} request failed: ${appendRelayHint(participant, detail)}`);
 }
 
 export function providerCanUseNativeSearch(participant: ParticipantConfig) {
