@@ -33,7 +33,7 @@ function repairJsonLike(candidate: string) {
   return candidate
     .replace(/[“”]/g, '"')
     .replace(/[‘’]/g, "'")
-    .replace(/([{,]\s*)([A-Za-z_][\w]*)\s*:/g, '$1"$2":')
+    .replace(/([{,]\s*)([A-Za-z_\u4e00-\u9fa5][\w\u4e00-\u9fa5]*)\s*:/g, '$1"$2":')
     .replace(/,\s*([}\]])/g, "$1")
     .replace(/:\s*'([^']*)'/g, ': "$1"');
 }
@@ -72,7 +72,9 @@ function flattenObject(value: unknown): Record<string, unknown> | null {
     flattenObject(record.turn) ??
     flattenObject(record.moderator) ??
     flattenObject(record.output) ??
-    flattenObject(record.result);
+    flattenObject(record.result) ??
+    flattenObject(record.final_recommendation) ??
+    flattenObject(record.analysis);
 
   return nested ? { ...record, ...nested } : record;
 }
@@ -91,6 +93,74 @@ function pickBoolean(record: Record<string, unknown>, keys: string[]) {
     if (typeof value === "boolean") return value;
   }
   return undefined;
+}
+
+function prettifyObjectKey(key: string, locale: Locale) {
+  const dictionary: Record<string, Record<Locale, string>> = {
+    analysis: { zh: "分析", en: "Analysis" },
+    final_recommendation: { zh: "最终建议", en: "Final recommendation" },
+    choice: { zh: "建议选择", en: "Recommended choice" },
+    reason: { zh: "理由", en: "Reason" },
+    summary: { zh: "总结", en: "Summary" },
+    academic_comparison: { zh: "学术对比", en: "Academic comparison" },
+    academic: { zh: "学术对比", en: "Academic comparison" },
+    employment: { zh: "就业结果", en: "Career outcomes" },
+    brand: { zh: "品牌与信号", en: "Brand and signal" },
+    skills: { zh: "能力培养", en: "Skill development" },
+    risk: { zh: "风险分析", en: "Risk analysis" },
+    message: { zh: "主持提醒", en: "Moderator note" },
+    content: { zh: "内容", en: "Content" },
+    text: { zh: "内容", en: "Content" },
+  };
+
+  if (dictionary[key]) return dictionary[key][locale];
+
+  const cleaned = key
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return locale === "zh" ? "内容" : "Content";
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function renderJsonLikeValue(value: unknown, locale: Locale, depth = 0): string {
+  if (value == null) return "";
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => renderJsonLikeValue(item, locale, depth + 1))
+      .filter(Boolean)
+      .map((item) => `${"  ".repeat(depth)}- ${item}`)
+      .join("\n");
+  }
+
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, nested]) => {
+        const rendered = renderJsonLikeValue(nested, locale, depth + 1);
+        if (!rendered) return "";
+
+        const title = prettifyObjectKey(key, locale);
+        if (typeof nested === "object" && nested && !Array.isArray(nested)) {
+          return `${"  ".repeat(depth)}${title}\n${rendered}`;
+        }
+
+        return `${"  ".repeat(depth)}${title}: ${rendered}`;
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  return "";
 }
 
 function parseJsonFields(raw: string): ParsedTurnFields {
@@ -131,13 +201,22 @@ export function parseStructuredTurnText(rawText: string): ParsedTurnFields {
   return parseLabeledFields(clean);
 }
 
+export function renderJsonLikeText(rawText: string, locale: Locale) {
+  const parsed = tryParseJsonLike<unknown>(rawText);
+  if (!parsed) return sanitizeModelText(rawText);
+
+  const rendered = renderJsonLikeValue(parsed, locale);
+  return sanitizeModelText(rendered || rawText);
+}
+
 export function normalizeReadableDebaterTurn(
   rawText: string,
   fallbackPosition: "support" | "oppose" | "neutral",
+  locale: Locale,
 ) {
   const cleanText = sanitizeModelText(rawText);
   const parsed = parseStructuredTurnText(cleanText);
-  const content = parsed.message?.trim() || cleanText;
+  const content = parsed.message?.trim() || renderJsonLikeText(cleanText, locale);
   const lead = firstNonEmptyParagraph(content) || content;
   const tail = lastNonEmptyParagraph(content) || content;
 
@@ -153,7 +232,7 @@ export function normalizeReadableDebaterTurn(
 
 export function buildJudgeReadableSummary(locale: Locale, report: FinalReport) {
   if (report.rawText?.trim()) {
-    return report.rawText.trim();
+    return renderJsonLikeText(report.rawText.trim(), locale);
   }
 
   return [
@@ -253,7 +332,7 @@ export function buildSummaryGuidance(config: DebateConfig) {
 }
 
 export function normalizeFreeTextFinalReport(rawText: string): FinalReport {
-  const clean = sanitizeModelText(rawText);
+  const clean = renderJsonLikeText(rawText, "en");
   const firstParagraph = firstNonEmptyParagraph(clean) || "";
 
   return {

@@ -22,14 +22,45 @@ const OFFICIAL_HOSTS: Partial<Record<ProviderKind, string>> = {
   xai: "api.x.ai",
 };
 
+function normalizeAsciiPunctuation(value: string) {
+  return value
+    .replace(/：/g, ":")
+    .replace(/／/g, "/")
+    .replace(/．/g, ".")
+    .replace(/，/g, ",")
+    .replace(/　/g, " ");
+}
+
+function sanitizeApiKey(apiKey: string) {
+  return normalizeAsciiPunctuation(apiKey)
+    .trim()
+    .replace(/^api(?:\s|-|_)?key\s*[:：]\s*/i, "")
+    .replace(/^bearer\s+/i, "")
+    .replace(/^["']|["']$/g, "")
+    .trim();
+}
+
+function sanitizeBaseUrl(baseUrl: string) {
+  const normalized = normalizeAsciiPunctuation(baseUrl)
+    .trim()
+    .replace(/^base\s*url\s*[:：]\s*/i, "");
+
+  try {
+    return new URL(normalized).toString();
+  } catch {
+    return normalized;
+  }
+}
+
 function buildEndpoint(baseUrl: string, path: string) {
-  const normalized = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  const safeBaseUrl = sanitizeBaseUrl(baseUrl);
+  const normalized = safeBaseUrl.endsWith("/") ? safeBaseUrl : `${safeBaseUrl}/`;
   return new URL(path, normalized).toString();
 }
 
 function getHostname(baseUrl: string) {
   try {
-    return new URL(baseUrl).hostname.toLowerCase();
+    return new URL(sanitizeBaseUrl(baseUrl)).hostname.toLowerCase();
   } catch {
     return "";
   }
@@ -151,6 +182,36 @@ function collectTextParts(
     .join("\n");
 }
 
+function collectResponsesText(value: unknown, bucket: string[] = []): string[] {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed) bucket.push(trimmed);
+    return bucket;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectResponsesText(item, bucket));
+    return bucket;
+  }
+
+  if (!value || typeof value !== "object") {
+    return bucket;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const [key, nested] of Object.entries(record)) {
+    if (["title", "url", "id", "status", "type", "role"].includes(key)) continue;
+    if (key === "annotations" || key === "citations") continue;
+    collectResponsesText(nested, bucket);
+  }
+
+  return bucket;
+}
+
+function uniqueText(lines: string[]) {
+  return lines.filter((line, index, array) => array.findIndex((candidate) => candidate === line) === index).join("\n");
+}
+
 function extractChatMessageText(content: unknown): string {
   if (typeof content === "string") {
     return content.trim();
@@ -179,6 +240,27 @@ function extractChatMessageText(content: unknown): string {
   return "";
 }
 
+function extractResponsesReadableText(data: {
+  output_text?: string;
+  output?: unknown;
+}) {
+  const pieces = [
+    typeof data.output_text === "string" ? data.output_text.trim() : "",
+    collectTextParts(
+      Array.isArray(data.output)
+        ? (data.output as Array<{
+            type?: string;
+            text?: string;
+            content?: Array<{ type?: string; text?: string }>;
+          }>)
+        : [],
+    ),
+    uniqueText(collectResponsesText(data.output)),
+  ].filter(Boolean);
+
+  return uniqueText(pieces);
+}
+
 async function callResponsesApi(
   participant: ParticipantConfig,
   messages: ChatMessage[],
@@ -190,7 +272,7 @@ async function callResponsesApi(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${participant.apiKey}`,
+        Authorization: `Bearer ${sanitizeApiKey(participant.apiKey)}`,
       },
       body: JSON.stringify({
         model: participant.model,
@@ -243,7 +325,7 @@ async function callResponsesApi(
     })),
   );
 
-  const text = data.output_text?.trim() || collectTextParts(data.output);
+  const text = extractResponsesReadableText(data);
   if (!text.trim()) {
     throw makeProviderError(participant, "The API returned successfully but no readable text was found.");
   }
@@ -262,7 +344,7 @@ async function callAnthropic(participant: ParticipantConfig, messages: ChatMessa
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": participant.apiKey,
+        "x-api-key": sanitizeApiKey(participant.apiKey),
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
@@ -322,7 +404,7 @@ async function callGemini(participant: ParticipantConfig, messages: ChatMessage[
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-goog-api-key": participant.apiKey,
+        "x-goog-api-key": sanitizeApiKey(participant.apiKey),
       },
       body: JSON.stringify({
         system_instruction: {
@@ -385,7 +467,7 @@ async function callChatCompletion(participant: ParticipantConfig, messages: Chat
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${participant.apiKey}`,
+        Authorization: `Bearer ${sanitizeApiKey(participant.apiKey)}`,
       },
       body: JSON.stringify({
         model: participant.model,

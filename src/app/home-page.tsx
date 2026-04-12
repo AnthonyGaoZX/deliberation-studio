@@ -63,7 +63,47 @@ function createDefaultProviderConnections(): ProviderConnectionMap {
   );
 }
 
-function normalizeParticipantConfig(participant: ParticipantConfig): ParticipantConfig {
+function normalizeAsciiPunctuation(value: string) {
+  return value
+    .replace(/：/g, ":")
+    .replace(/／/g, "/")
+    .replace(/．/g, ".")
+    .replace(/，/g, ",")
+    .replace(/　/g, " ");
+}
+
+function sanitizeApiKeyInput(value: string) {
+  return normalizeAsciiPunctuation(value)
+    .trim()
+    .replace(/^api(?:\s|-|_)?key\s*[:：]\s*/i, "")
+    .replace(/^bearer\s+/i, "")
+    .replace(/^["']|["']$/g, "")
+    .trim();
+}
+
+function sanitizeBaseUrlInput(value: string, provider: ProviderKind, allowEmpty = true) {
+  const normalized = normalizeAsciiPunctuation(value)
+    .trim()
+    .replace(/^base\s*url\s*[:：]\s*/i, "");
+
+  if (!normalized) {
+    return allowEmpty ? "" : PROVIDER_CATALOG[provider].defaultBaseUrl;
+  }
+
+  try {
+    return new URL(normalized).toString();
+  } catch {
+    return normalized;
+  }
+}
+
+function roleNameForParticipant(stance: DebateStance, locale: Locale, isJudge = false) {
+  if (isJudge) return text(locale, "裁判", "Judge");
+  if (stance === "free") return text(locale, "自由立场", "Free stance");
+  return stanceLabel(stance, locale);
+}
+
+function normalizeParticipantConfig(participant: ParticipantConfig, locale?: Locale): ParticipantConfig {
   const nextPersona =
     participant.persona === "supporter" ||
     participant.persona === "opposer" ||
@@ -78,6 +118,10 @@ function normalizeParticipantConfig(participant: ParticipantConfig): Participant
     ...participant,
     stance: participant.stance ?? participant.side ?? "free",
     persona: nextPersona,
+    roleName:
+      locale == null
+        ? participant.roleName
+        : roleNameForParticipant(participant.stance ?? participant.side ?? "free", locale, JUDGE_PERSONA_IDS.includes(nextPersona)),
     personaDescription:
       participant.personaDescription ??
       participant.templateDescription ??
@@ -97,7 +141,7 @@ function buildPersonaDescription(persona: ParticipantConfig["persona"], locale: 
 function migrateConfig(config: DebateConfig): DebateConfig {
   return {
     ...config,
-    participants: config.participants.map((participant) => normalizeParticipantConfig(participant)),
+    participants: config.participants.map((participant) => normalizeParticipantConfig(participant, config.locale)),
   };
 }
 
@@ -108,8 +152,8 @@ function resolveParticipantConnection(
   const providerConnection = providerConnections[participant.provider];
   return {
     ...participant,
-    apiKey: providerConnection?.apiKey?.trim() ?? "",
-    baseUrl: providerConnection?.baseUrl?.trim() || PROVIDER_CATALOG[participant.provider].defaultBaseUrl,
+    apiKey: sanitizeApiKeyInput(providerConnection?.apiKey ?? ""),
+    baseUrl: sanitizeBaseUrlInput(providerConnection?.baseUrl ?? "", participant.provider, false),
   };
 }
 
@@ -220,7 +264,7 @@ function TrendChart({
     return (
       <div className="chart-card">
         <strong>{text(locale, "动态胜率会显示在这里", "Dynamic win-rate trend appears here")}</strong>
-        <p>{text(locale, "只有在动态停止模式真正运行后，裁判才会逐轮更新曲线。", "The curve updates only after dynamic-stop mode is actually running.")}</p>
+        <p>{text(locale, "只有在动态停止模式真正运行后，裁判才会在每次辩手发言后更新曲线。", "The curve updates after each debater speech once dynamic-stop mode is running.")}</p>
       </div>
     );
   }
@@ -243,7 +287,7 @@ function TrendChart({
     <div className="chart-card">
       <div className="chart-head">
         <strong>{text(locale, "动态胜率走势", "Dynamic win-rate trend")}</strong>
-        <p>{text(locale, "系统会在每轮后重新估算当前哪一方更占优势。", "After each round, the system re-estimates which side currently has the edge.")}</p>
+        <p>{text(locale, "系统会在每次辩手发言后重新估算当前哪一方更占优势。", "After each debater speech, the system re-estimates which side currently has the edge.")}</p>
       </div>
       <svg viewBox={`0 0 ${width} ${height}`} className="trend-chart" aria-label="win rate chart">
         {[0, 25, 50, 75, 100].map((tick) => {
@@ -272,10 +316,10 @@ function buildSingleParticipants(
   existing: ParticipantConfig[] = [],
 ) {
   const generated = createStarterSingleModelSetup(locale, provider, Math.max(2, roleCount - 1));
-  const base = normalizeParticipantConfig((shared as ParticipantConfig) ?? existing[0] ?? createParticipant(provider, 0, locale));
+  const base = normalizeParticipantConfig((shared as ParticipantConfig) ?? existing[0] ?? createParticipant(provider, 0, locale), locale);
   const providerLabel = PROVIDER_CATALOG[provider].label[locale];
   return generated.map((generatedRole, index) => {
-    const current = existing[index] ? normalizeParticipantConfig(existing[index]) : undefined;
+    const current = existing[index] ? normalizeParticipantConfig(existing[index], locale) : undefined;
     const isJudge = index === generated.length - 1;
     const fallbackPersona = isJudge ? "objective_judge" : index === 0 ? "balanced_standard" : generatedRole.persona;
     const persona = current?.persona ?? fallbackPersona;
@@ -296,13 +340,15 @@ function buildSingleParticipants(
       enableSearch: current?.enableSearch ?? base.enableSearch ?? true,
       includeInFinalSummary: isJudge ? true : current?.includeInFinalSummary ?? true,
       label: isJudge ? text(locale, "中立裁判", "Neutral judge") : `${providerLabel} ${index + 1}`,
-      roleName:
-        current?.roleName ??
-        text(
-          locale,
-          isJudge ? "裁判" : generatedRole.stance === "support" ? "支持方" : generatedRole.stance === "oppose" ? "反对方" : "辩手",
-          isJudge ? "Judge" : generatedRole.stance === "support" ? "Support" : generatedRole.stance === "oppose" ? "Oppose" : "Debater",
-        ),
+      roleName: roleNameForParticipant(
+        isJudge
+          ? "neutral"
+          : current?.stance === "neutral"
+            ? generatedRole.stance
+            : current?.stance ?? generatedRole.stance,
+        locale,
+        isJudge,
+      ),
       stance:
         isJudge
           ? "neutral"
@@ -364,7 +410,7 @@ function applyConfigConstraints(config: DebateConfig, locale: Locale): DebateCon
       };
     }
   } else if (next.participants.length >= 1) {
-    const normalized = next.participants.map((participant) => normalizeParticipantConfig(participant));
+    const normalized = next.participants.map((participant) => normalizeParticipantConfig(participant, locale));
     const existingJudge = normalized.findLast((participant) => JUDGE_PERSONA_IDS.includes(participant.persona));
     const judge: ParticipantConfig =
       existingJudge ??
@@ -394,11 +440,29 @@ function applyConfigConstraints(config: DebateConfig, locale: Locale): DebateCon
                 : "oppose"
               : participant.stance,
         persona: JUDGE_PERSONA_IDS.includes(participant.persona) ? "balanced_standard" : participant.persona,
+        roleName: roleNameForParticipant(
+          next.discussionType === "research"
+            ? "free"
+            : participant.stance === "neutral"
+              ? index % 2 === 0
+                ? "support"
+                : "oppose"
+              : participant.stance,
+          locale,
+        ),
       }));
 
     next = {
       ...next,
-      participants: [...debaters, { ...judge, stance: "neutral", includeInFinalSummary: true }],
+      participants: [
+        ...debaters,
+        {
+          ...judge,
+          stance: "neutral",
+          roleName: roleNameForParticipant("neutral", locale, true),
+          includeInFinalSummary: true,
+        },
+      ],
     };
   }
 
@@ -479,6 +543,20 @@ export default function HomePage() {
   const judge = activeConfig.participants.at(-1);
   const debaters = activeConfig.participants.slice(0, Math.max(0, activeConfig.participants.length - 1));
   const evaluations = useMemo(() => transcript.flatMap((turn) => (turn.evaluation ? [turn.evaluation] : [])), [transcript]);
+  const visibleSearchSummaryTurnIds = useMemo(() => {
+    const seen = new Set<string>();
+    return new Set(
+      transcript.flatMap((turn) => {
+        const summary = turn.searchSummary?.trim();
+        if (!summary) return [];
+        if (turn.searchFailed || !seen.has(summary)) {
+          seen.add(summary);
+          return [turn.id];
+        }
+        return [];
+      }),
+    );
+  }, [transcript]);
 
   const showExternalSearchField =
     activeConfig.search.enabled &&
@@ -596,7 +674,9 @@ export default function HomePage() {
         {
           ...current,
           participants: current.participants.map((participant) =>
-            participant.id === participantId ? normalizeParticipantConfig(updater(normalizeParticipantConfig(participant))) : participant,
+            participant.id === participantId
+              ? normalizeParticipantConfig(updater(normalizeParticipantConfig(participant, locale)), locale)
+              : participant,
           ),
         },
         locale,
@@ -606,8 +686,8 @@ export default function HomePage() {
 
   function updateSingleShared(updater: (participant: ParticipantConfig) => ParticipantConfig) {
     updateDraft((current) => {
-      const base = normalizeParticipantConfig(current.participants[0] ?? createParticipant("openai", 0, locale));
-      const shared = normalizeParticipantConfig(updater(base));
+      const base = normalizeParticipantConfig(current.participants[0] ?? createParticipant("openai", 0, locale), locale);
+      const shared = normalizeParticipantConfig(updater(base), locale);
       return applyConfigConstraints(
         {
           ...current,
@@ -653,7 +733,7 @@ export default function HomePage() {
         judgeRole.personaDescription = getPersonaPreset("objective_judge")?.prompt[locale] ?? "";
         return applyConfigConstraints({ ...current, participants: [first, second, judgeRole] }, locale);
       }
-      const next = current.participants.map((participant) => normalizeParticipantConfig(participant));
+      const next = current.participants.map((participant) => normalizeParticipantConfig(participant, locale));
       const judgeRole = next.pop();
       if (!judgeRole) return current;
       next.push(createParticipant(provider, next.length, locale));
@@ -663,7 +743,7 @@ export default function HomePage() {
   }
 
   function renumberMultiModelParticipants(participants: ParticipantConfig[]) {
-    const normalized = participants.map((participant) => normalizeParticipantConfig(participant));
+    const normalized = participants.map((participant) => normalizeParticipantConfig(participant, locale));
     const judgeRole = normalized.at(-1);
     const debaterRoles = normalized.slice(0, Math.max(0, normalized.length - 1)).map((participant, index) => ({
       ...participant,
@@ -788,6 +868,11 @@ export default function HomePage() {
     const lastSpeakerIndex = speakingCount - 1;
 
     if (stage === "opening" || stage === "response") {
+      if (sessionConfig.discussionPattern === "judge_stop") {
+        setStage("score");
+        return;
+      }
+
       if (speakerIndex < lastSpeakerIndex) {
         setSpeakerIndex((value) => value + 1);
       } else {
@@ -798,10 +883,6 @@ export default function HomePage() {
     }
 
     if (stage === "moderator") {
-      if (sessionConfig.discussionPattern === "judge_stop") {
-        setStage("score");
-        return;
-      }
       if (round >= sessionConfig.rounds) {
         setStage("judge");
       } else {
@@ -812,7 +893,23 @@ export default function HomePage() {
     }
 
     if (stage === "score") {
-      if (evaluation?.shouldStop || round >= sessionConfig.rounds) {
+      if (evaluation?.shouldStop) {
+        setStage("judge");
+        return;
+      }
+
+      if (sessionConfig.discussionPattern === "judge_stop") {
+        if (speakerIndex < lastSpeakerIndex) {
+          setSpeakerIndex((value) => value + 1);
+          setStage(round === 1 ? "opening" : "response");
+        } else {
+          setStage("moderator");
+          setSpeakerIndex(0);
+        }
+        return;
+      }
+
+      if (round >= sessionConfig.rounds) {
         setStage("judge");
       } else {
         setRound((value) => value + 1);
@@ -1097,7 +1194,7 @@ export default function HomePage() {
                           onChange={(event) =>
                             updateProviderConnection(kind, (current) => ({
                               ...current,
-                              apiKey: event.target.value,
+                              apiKey: sanitizeApiKeyInput(event.target.value),
                             }))
                           }
                         />
@@ -1116,7 +1213,7 @@ export default function HomePage() {
                           onChange={(event) =>
                             updateProviderConnection(kind, (current) => ({
                               ...current,
-                              baseUrl: event.target.value,
+                              baseUrl: sanitizeBaseUrlInput(event.target.value, kind),
                             }))
                           }
                         />
@@ -2000,7 +2097,17 @@ export default function HomePage() {
                         ) : null}
                       </div>
                     </div>
-                    {turn.searchSummary ? <p className={turn.searchFailed ? "score-note" : "search-note"}>{turn.searchSummary}</p> : null}
+                    {turn.searchSummary && visibleSearchSummaryTurnIds.has(turn.id) ? (
+                      <p className={turn.searchFailed ? "score-note" : "search-note"}>
+                        {turn.searchFailed
+                          ? turn.searchSummary
+                          : text(
+                              locale,
+                              "本轮已参考联网资料。具体来源见下方链接。",
+                              "This turn used live web evidence. See the sources below.",
+                            )}
+                      </p>
+                    ) : null}
                     <TurnBody turn={turn} />
                     {turn.citations?.length ? (
                       <div className="citations">

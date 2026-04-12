@@ -95,6 +95,41 @@ describe("provider adapters", () => {
     expect(result.citations[0]?.url).toBe("https://example.com");
   });
 
+  it("extracts readable text from nested OpenAI responses output blocks", async () => {
+    const openAiParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-5.4-mini",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          output: [
+            {
+              content: [
+                {
+                  type: "output_text",
+                  text: "Natural paragraph one.",
+                },
+                {
+                  type: "output_text",
+                  content: [{ type: "output_text", text: "Natural paragraph two." }],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await callProvider(openAiParticipant, [{ role: "user", content: "test" }], false);
+    expect(result.text).toContain("Natural paragraph one.");
+    expect(result.text).toContain("Natural paragraph two.");
+  });
+
   it("parses Anthropic text blocks cleanly", async () => {
     const anthropicParticipant: ParticipantConfig = {
       ...participant,
@@ -183,6 +218,32 @@ describe("provider adapters", () => {
     const result = await callProvider(geminiParticipant, [{ role: "user", content: "test" }], true);
     expect(result.text).toContain("Main point");
     expect(result.citations[0]?.domain).toBe("example.com");
+  });
+
+  it("sanitizes Gemini api keys and base urls before sending headers", async () => {
+    const geminiParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "gemini",
+      baseUrl: "https：//generativelanguage.googleapis.com/v1beta",
+      apiKey: "API Key：demo-key",
+      model: "gemini-3.1-flash-lite",
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        candidates: [{ content: { parts: [{ text: "ok" }] } }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await callProvider(geminiParticipant, [{ role: "user", content: "test" }], false);
+
+    const calledUrl = String(fetchMock.mock.calls[0]?.[0]);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+
+    expect(calledUrl).toContain("https://generativelanguage.googleapis.com/v1beta");
+    expect(headers["x-goog-api-key"]).toBe("demo-key");
   });
 
   it("only enables chat-completion json mode when explicitly requested", async () => {

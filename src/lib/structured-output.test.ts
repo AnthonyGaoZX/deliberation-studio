@@ -4,6 +4,7 @@ import {
   normalizeFreeTextFinalReport,
   normalizeReadableDebaterTurn,
   parseStructuredTurnText,
+  renderJsonLikeText,
   tryParseJsonLike,
 } from "@/lib/structured-output";
 import type { ParticipantConfig } from "@/types/debate";
@@ -45,6 +46,7 @@ describe("structured output parsing", () => {
     const normalized = normalizeReadableDebaterTurn(
       "I still support this plan because the cost is manageable and the rollout can be staged.",
       "support",
+      "en",
     );
 
     expect(normalized.currentPosition).toBe("support");
@@ -57,6 +59,17 @@ describe("structured output parsing", () => {
     expect(report.rawText).toContain("safer choice");
     expect(report.shortConclusion).toContain("safer choice");
     expect(report.uncertainty).toBe("");
+  });
+
+  it("turns json-like moderator output into readable text", () => {
+    const rendered = renderJsonLikeText(
+      '{"analysis":{"academic":"LSE is stronger in theory.","career":"Imperial is more applied."},"final_recommendation":{"choice":"LSE","reason":"Stronger finance signal."}}',
+      "en",
+    );
+
+    expect(rendered).toContain("Analysis");
+    expect(rendered).toContain("Final recommendation");
+    expect(rendered).not.toContain('{"analysis"');
   });
 
   it("builds product-style DeepSeek fallback search text", () => {

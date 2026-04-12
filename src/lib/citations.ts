@@ -18,7 +18,7 @@ export function dedupeCitations(citations: Citation[]) {
 }
 
 export function sanitizeModelText(text: string) {
-  return text
+  const cleaned = text
     // xAI / Grok internal render tags
     .replace(/<grok:render[\s\S]*?<\/grok:render>/giu, "")
     .replace(/<argument[\s\S]*?<\/argument>/giu, "")
@@ -36,4 +36,14 @@ export function sanitizeModelText(text: string) {
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
+  const dedupedParagraphs = cleaned
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .filter((block, index, array) => index === 0 || block !== array[index - 1])
+    .join("\n\n");
+
+  const repeatedWholeBlock = dedupedParagraphs.match(/^([\s\S]{40,}?)\s+\1$/u);
+  return repeatedWholeBlock ? repeatedWholeBlock[1].trim() : dedupedParagraphs;
 }

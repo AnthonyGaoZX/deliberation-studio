@@ -13,6 +13,7 @@ import {
   normalizeFreeTextFinalReport,
   normalizeReadableDebaterTurn,
   parseStructuredTurnText,
+  renderJsonLikeText,
   tryParseJsonLike,
 } from "@/lib/structured-output";
 import type {
@@ -327,6 +328,7 @@ function participantSystemPrompt(config: DebateConfig, participant: ParticipantC
         ? "Web search was unavailable this round. Be transparent that you may rely on prior model knowledge."
         : `Search evidence for this round:\n${searchEvidence.contextBlock}`
       : "",
+    "If any search material is in another language, rewrite it in the requested output language instead of copying it verbatim.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -352,6 +354,7 @@ function participantUserPrompt(
     transcript.length ? `Recent discussion:\n${buildTranscriptSnippet(transcript)}` : "There is no previous discussion yet.",
     "Write in natural paragraphs. Do not output raw JSON, protocol text, or field labels.",
     "Your paragraph should naturally include: your stance, key reason, evidence, response to others, and interim conclusion.",
+    "Do not copy shared search notes line for line. Absorb them, then answer naturally in the requested output language.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -377,6 +380,7 @@ function moderatorPrompt(config: DebateConfig, transcript: DebateTurn[], rolling
     rollingSummary?.trim() ? `Earlier summary:\n${rollingSummary.trim()}` : "",
     `Recent discussion:\n${buildTranscriptSnippet(transcript)}`,
     "Reply in short natural text. Do not output raw JSON, protocol text, or field labels.",
+    "If search evidence is in another language, summarize it in the requested output language.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -399,6 +403,7 @@ function scorePrompt(config: DebateConfig, transcript: DebateTurn[], rollingSumm
     "Reply in natural text.",
     "You must clearly state support win rate and oppose win rate as percentages, then briefly explain why.",
     "Do not output raw JSON, protocol text, or developer-oriented field labels.",
+    "If search evidence is in another language, summarize it in the requested output language.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -427,6 +432,7 @@ function judgePrompt(config: DebateConfig, transcript: DebateTurn[], rollingSumm
     "Write a readable final summary in natural paragraphs.",
     "Include a concise conclusion, a fuller explanation, any remaining uncertainty, and guidance on how the user should interpret disagreement.",
     "Do not output raw JSON, protocol text, or developer-oriented field labels.",
+    "If earlier evidence is in another language, summarize it in the requested output language.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -442,7 +448,7 @@ function normalizeParticipantTurn(
   searchEvidence: SearchEvidence | null,
 ): DebateTurn {
   const fallbackPosition = participant.stance === "free" ? "neutral" : participant.stance;
-  const normalized = normalizeReadableDebaterTurn(rawText, fallbackPosition);
+  const normalized = normalizeReadableDebaterTurn(rawText, fallbackPosition, config.outputLanguage);
 
   return {
     id: crypto.randomUUID(),
@@ -498,12 +504,12 @@ function normalizeEvaluation(rawText: string, threshold: number): RoundEvaluatio
   };
 }
 
-function normalizeFinalReport(rawText: string): FinalReport {
+function normalizeFinalReport(rawText: string, locale: DebateConfig["outputLanguage"]): FinalReport {
   const parsed = tryParseJsonLike<FinalReport>(rawText);
   if (parsed) {
     return {
       ...parsed,
-      rawText: sanitizeModelText(rawText),
+      rawText: renderJsonLikeText(rawText, locale),
     };
   }
 
@@ -600,11 +606,12 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
         { role: "user", content: moderatorPrompt(input.config, input.transcript, input.rollingSummary) },
       ],
       false,
-      true,
+      false,
     );
 
     const parsed = parseStructuredTurnText(result.text);
-    const moderatorMessage = parsed.message?.trim() || sanitizeModelText(result.text) || buildModeratorFallback(input.config.locale);
+    const moderatorMessage =
+      parsed.message?.trim() || renderJsonLikeText(result.text, input.config.outputLanguage) || buildModeratorFallback(input.config.locale);
 
     return {
       turn: {
@@ -689,7 +696,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
       false,
     );
 
-    const report = normalizeFinalReport(result.text);
+    const report = normalizeFinalReport(result.text, input.config.outputLanguage);
 
     return {
       turn: {
