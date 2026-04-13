@@ -331,11 +331,6 @@ html[data-theme="dark"] .switch-group {
 
 .switch-option-active::before {
   opacity: 1;
-  animation: shine 3s linear infinite reverse;
-}
-
-@keyframes shine {
-  to { background-position: 200% center; }
 }
 
 /* BUTTONS */

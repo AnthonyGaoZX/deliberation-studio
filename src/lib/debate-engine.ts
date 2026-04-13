@@ -212,6 +212,7 @@ const COMMON_RULES = [
   "Keep the debate structured and evidence-oriented.",
   "Do not impersonate another participant.",
   "Separate facts, interpretation, and recommendations.",
+  "Actively engage with other participants' arguments. State exactly what you are refuting or supporting.",
 ];
 
 function outputLanguageInstruction(language: DebateConfig["outputLanguage"]) {
@@ -398,11 +399,13 @@ function participantUserPrompt(
     `Current phase: ${phase}`,
     `Round: ${round}`,
     detectResearchCounterpoint(config, participant, transcript),
-    rollingSummary?.trim() ? `Earlier summary:\n${rollingSummary.trim()}` : "",
-    transcript.length ? `Recent discussion:\n${buildTranscriptSnippet(transcript)}` : "There is no previous discussion yet.",
+    rollingSummary?.trim() ? `[EARLIER SUMMARY]\n${rollingSummary.trim()}` : "",
+    transcript.length
+      ? `[CRITICAL REVIEW REQUIREMENT]\nRecent discussion transcript:\n${buildTranscriptSnippet(transcript)}\n\nYou MUST read the above transcript. Actively refer back to the specific points made by previous participants and strongly refute or support them. Do not just state your own isolated argument.`
+      : "There is no previous discussion yet. Lay out a strong opening argument.",
     "Write in natural paragraphs. Do not output raw JSON, protocol text, or field labels.",
     "Your paragraph should naturally include: your stance, key reason, evidence, response to others, and interim conclusion.",
-    "Do not copy shared search notes line for line. Absorb them, then answer naturally in the requested output language.",
+    "Do not copy shared search notes line for line. Absorb them, then answer naturally.",
     config.discussionType === "conclusion"
       ? "Push a clear recommendation for your side. You may mention limits, but do not dissolve into an undecided answer."
       : "",
@@ -750,8 +753,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
         providerCanUseNativeSearch(participant),
         input.config.search.enabled,
         input.config.search.continuePerRound,
-      ) &&
-      !searchEvidence?.failed;
+      );
 
     const result = await callProvider(
       participant,
@@ -833,8 +835,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
       input.config.search.enabled,
       input.config.search.continuePerRound,
     ) &&
-    participant.enableSearch &&
-    !searchEvidence?.failed;
+    participant.enableSearch;
 
   const result = await callProvider(
     participant,
@@ -854,7 +855,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
       input.phase,
       input.round,
       result.text,
-      result.citations.length ? result.citations : searchEvidence?.citations ?? [],
+      result.citations.length ? result.citations : (nativeSearch ? [] : (searchEvidence?.citations ?? [])),
       searchEvidence,
     ),
   };
