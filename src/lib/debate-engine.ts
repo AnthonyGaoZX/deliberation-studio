@@ -583,15 +583,9 @@ function normalizeFinalReport(rawText: string, locale: DebateConfig["outputLangu
   return normalizeFreeTextFinalReport(rawText);
 }
 
-function buildSearchQuery(config: DebateConfig, participant: ParticipantConfig, transcript: DebateTurn[], rollingSummary?: string) {
-  return [
-    config.topic,
-    `Participant role: ${participant.roleName}`,
-    rollingSummary?.trim() ? `Earlier summary:\n${rollingSummary.trim()}` : "",
-    transcript.length ? `Recent discussion:\n${buildTranscriptSnippet(transcript)}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+function buildSearchQuery(config: DebateConfig, participant: ParticipantConfig) {
+  const side = sideLabel(participant.stance, config.locale);
+  return `${config.topic} ${side} perspective and arguments`;
 }
 
 function mergeSearchEvidence(base: SearchEvidence | null, supplement: SearchEvidence): SearchEvidence {
@@ -666,7 +660,7 @@ async function resolveSearchEvidence(
   }
 
   const supportsNativeSearch = providerCanUseNativeSearch(participant);
-  const query = buildSearchQuery(config, participant, transcript, rollingSummary);
+  const query = buildSearchQuery(config, participant);
 
   if (config.search.mode === "shared_once") {
     if (!config.search.continuePerRound) return sharedSearch;

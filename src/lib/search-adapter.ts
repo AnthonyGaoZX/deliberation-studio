@@ -179,7 +179,7 @@ async function searchWithDuckDuckGoHtml(query: string): Promise<SearchEvidence> 
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "DeliberationStudio/1.0",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     },
     body: `q=${encodeURIComponent(query)}`,
   });
@@ -188,8 +188,12 @@ async function searchWithDuckDuckGoHtml(query: string): Promise<SearchEvidence> 
     throw new Error(`DuckDuckGo HTML search failed: HTTP ${response.status}`);
   }
 
-  const html = await response.text();
-  const matches = [...html.matchAll(/<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].slice(0, 6);
+  const bodyText = await response.text().catch(() => "");
+  if (!bodyText.trim()) {
+    throw new Error("DuckDuckGo HTML search returned an empty response");
+  }
+
+  const matches = [...bodyText.matchAll(/<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].slice(0, 6);
   const citations: Citation[] = matches.flatMap((match) => {
     const [, href, rawTitle] = match;
     const title = rawTitle.replace(/<[^>]+>/g, "").trim();

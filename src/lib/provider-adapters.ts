@@ -130,6 +130,10 @@ export function providerCanUseNativeSearch(participant: ParticipantConfig) {
     return false;
   }
 
+  if (usesGatewayBaseUrl(participant) && ["openai", "anthropic", "gemini"].includes(participant.provider)) {
+    return false;
+  }
+
   return true;
 }
 
