@@ -189,7 +189,7 @@ const turnRequestSchema = z.object({
       ),
       contextBlock: z.string(),
       failed: z.boolean(),
-      provider: z.enum(["tavily", "duckduckgo", "searxng", "none", "native"]).optional(),
+      provider: z.enum(["tavily", "duckduckgo", "searxng", "wikipedia", "none", "native"]).optional(),
       failureReason: z.string().optional(),
     })
     .nullable(),
@@ -585,7 +585,10 @@ function normalizeFinalReport(rawText: string, locale: DebateConfig["outputLangu
 
 function buildSearchQuery(config: DebateConfig, participant: ParticipantConfig) {
   const side = sideLabel(participant.stance, config.locale);
-  return `${config.topic} ${side} perspective and arguments`;
+  const suffix = config.locale === "zh"
+    ? `${side} 相关观点与证据`
+    : `${side} perspective and arguments`;
+  return `${config.topic} ${suffix}`;
 }
 
 function mergeSearchEvidence(base: SearchEvidence | null, supplement: SearchEvidence): SearchEvidence {

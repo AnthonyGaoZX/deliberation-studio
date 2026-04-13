@@ -59,15 +59,15 @@ describe("HomePage UI behavior", () => {
   it("shows external search API input only when DeepSeek search augmentation is relevant", () => {
     render(<HomePage />);
 
-    expect(screen.queryByLabelText(/外部搜索 API|External search API/i)).toBeNull();
+    expect(screen.queryByLabelText(/Tavily|外部搜索|External search/i)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /使用 DeepSeek|Use DeepSeek/i }));
-    expect(screen.getByLabelText(/外部搜索 API|External search API/i)).toBeTruthy();
+    expect(screen.getByLabelText(/Tavily|外部搜索|External search/i)).toBeTruthy();
 
     const providerSelect = screen.getAllByLabelText(/模型厂商|Provider/i)[0] as HTMLSelectElement;
     fireEvent.change(providerSelect, { target: { value: "openai" } });
 
-    expect(screen.queryByLabelText(/外部搜索 API|External search API/i)).toBeNull();
+    expect(screen.queryByLabelText(/Tavily|外部搜索|External search/i)).toBeNull();
   });
 
   it("shows one global provider settings area instead of per-role api key forms", () => {

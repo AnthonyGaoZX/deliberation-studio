@@ -140,7 +140,7 @@ export type SearchEvidence = {
   citations: Citation[];
   contextBlock: string;
   failed: boolean;
-  provider?: "tavily" | "duckduckgo" | "searxng" | "none" | "native";
+  provider?: "tavily" | "duckduckgo" | "searxng" | "wikipedia" | "none" | "native";
   failureReason?: string;
 };
 

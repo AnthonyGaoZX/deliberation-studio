@@ -13,26 +13,27 @@ describe("performSearch", () => {
     expect(result.citations).toHaveLength(0);
   });
 
-  it.skip("falls back to DuckDuckGo HTML results when instant answers are empty", async () => {
+  it("falls back to Wikipedia when no Tavily key is provided", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          text: async () => JSON.stringify({
-            AbstractText: "",
-            RelatedTopics: [],
-          }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          text: async () => '<a class="result__a" href="https://example.com/article">Example Article</a>\n<a class="result__url" href="https://example.com/article">Example Article</a>',
+      vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          query: {
+            search: [
+              { title: "Example Article", pageid: 12345, snippet: "An example about the topic." },
+              { title: "Related Topic", pageid: 67890, snippet: "More details here." },
+            ],
+          },
         }),
+      }),
     );
 
     const result = await performSearch("test query");
     expect(result.failed).toBe(false);
+    expect(result.citations.length).toBeGreaterThan(0);
     expect(result.citations[0]?.title).toBe("Example Article");
+    expect(result.citations[0]?.domain).toBe("en.wikipedia.org");
   });
 
   it("sanitizes invalid Tavily queries and falls back to the debate topic", async () => {

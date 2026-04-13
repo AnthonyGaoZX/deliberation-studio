@@ -130,6 +130,16 @@ export function providerCanUseNativeSearch(participant: ParticipantConfig) {
     return false;
   }
 
+  // Generic gateways/relays only expose /chat/completions and do not support
+  // provider-specific native search routes (e.g. Gemini generateContent,
+  // Anthropic web_search tool, OpenAI responses API).
+  // Returning false here ensures: (a) callProvider routes through callChatCompletion,
+  // which is consistent; (b) resolveSearchEvidence falls through to the
+  // DuckDuckGo/Wikipedia external search chain rather than short-circuiting.
+  if (usesGatewayBaseUrl(participant)) {
+    return false;
+  }
+
   return true;
 }
 
@@ -658,15 +668,23 @@ export async function callProvider(
   jsonMode = false,
   responseLength: ResponseLengthMode = "balanced",
 ): Promise<ProviderResult> {
+  const gateway = usesGatewayBaseUrl(participant);
+
   switch (participant.provider) {
     case "openai":
-      return callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined, responseLength);
+      return gateway
+        ? callChatCompletion(participant, messages, jsonMode, responseLength)
+        : callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined, responseLength);
     case "xai":
       return callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined, responseLength);
     case "anthropic":
-      return callAnthropic(participant, messages, nativeSearch, responseLength);
+      return gateway
+        ? callChatCompletion(participant, messages, jsonMode, responseLength)
+        : callAnthropic(participant, messages, nativeSearch, responseLength);
     case "gemini":
-      return callGemini(participant, messages, nativeSearch, responseLength);
+      return gateway
+        ? callChatCompletion(participant, messages, jsonMode, responseLength)
+        : callGemini(participant, messages, nativeSearch, responseLength);
     case "deepseek":
     case "custom":
       return callChatCompletion(participant, messages, jsonMode, responseLength);

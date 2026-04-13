@@ -8,7 +8,7 @@ import {
   JUDGE_PERSONA_IDS,
   getPersonaPreset,
 } from "@/lib/persona-presets";
-import { createParticipant, PROVIDER_CATALOG, stanceLabel } from "@/lib/provider-catalog";
+import { createParticipant, PROVIDER_CATALOG, providerSupportsNativeSearch, stanceLabel } from "@/lib/provider-catalog";
 import type {
   DebateConfig,
   DebateStance,
@@ -431,6 +431,42 @@ export default function HomePage() {
                   <div key={kind} className="compact-note">
                     <strong>{meta.label[locale]}</strong>
                     <p className="muted">{meta.shortDescription[locale]}</p>
+                    <div className="search-capability-row">
+                      {providerSupportsNativeSearch(kind) ? (
+                        <span className="search-badge search-badge-native">
+                          ✦ {text(locale, "原生联网搜索", "Native web search")}
+                        </span>
+                      ) : (
+                        <span className="search-badge search-badge-fallback">
+                          ⇌ {text(locale, "外部搜索补充", "External search augmentation")}
+                        </span>
+                      )}
+                    </div>
+                    {kind === "deepseek" && (
+                      <div className="search-info-box">
+                        <strong>
+                          {text(locale, "💡 建议填写免费的 Tavily API Key", "💡 Recommend: add a free Tavily API key")}
+                        </strong>
+                        {text(
+                          locale,
+                          "DeepSeek 本身不内置联网能力。开启联网时，系统会依次尝试以下搜索来源：",
+                          "DeepSeek has no built-in web search. When search is enabled, the system tries these sources in order:",
+                        )}
+                        <ol style={{ margin: "6px 0 0 16px", padding: 0, lineHeight: 1.8 }}>
+                          <li>{text(locale, "Tavily（付费精准，推荐优先）", "Tavily (accurate, recommended — fill key above)")}</li>
+                          <li>{text(locale, "Wikipedia 公开 API（免费，无封锁）", "Wikipedia open API (free, always reachable)")}</li>
+                          <li>{text(locale, "DuckDuckGo Lite（部分地区可用）", "DuckDuckGo Lite (region-dependent)")}</li>
+                          <li>{text(locale, "SearXNG（备用）", "SearXNG (last resort)")}</li>
+                        </ol>
+                        <div style={{ marginTop: 8 }}>
+                          {text(
+                            locale,
+                            "不填 Tavily Key 时，系统会自动回退到 Wikipedia 等公开接口。Tavily 免费套餐每月 1000 次，通常足够日常使用。",
+                            "Without a Tavily key the system automatically falls back to Wikipedia. Tavily's free plan offers 1,000 searches/month — enough for most sessions.",
+                          )}
+                        </div>
+                      </div>
+                    )}
                     <div className="field-grid">
                       <Field label="API Key" hint={meta.apiKeyHelp[locale]}>
                         <input
@@ -1168,15 +1204,16 @@ export default function HomePage() {
 
                 {showExternalSearchField ? (
                   <Field
-                    label={text(locale, "外部搜索 API（可选）", "External search API (optional)")}
+                    label={text(locale, "Tavily 搜索 API Key（推荐填写 · 免费注册）", "Tavily Search API Key — Recommended · Free signup")}
                     hint={text(
                       locale,
-                      "仅在使用 DeepSeek 且开启联网时显示。填写 Tavily Key 可提高联网稳定性；不填则自动回退到公开搜索。",
-                      "Visible only when DeepSeek is selected with web search enabled. A Tavily key improves reliability; otherwise public fallback search is used.",
+                      "DeepSeek 没有内置联网能力。填写此 Key 后，DeepSeek 可稳定访问互联网，引用质量明显提升。不填时系统会自动回退到 Wikipedia 等免费公开接口，但搜索质量和稳定性有所下降。免费套餐每月 1000 次，注册地址：https://app.tavily.com/",
+                      "DeepSeek has no built-in web access. With this key DeepSeek gets reliable live search and higher-quality citations. Without it the system auto-falls back to Wikipedia and other public APIs — functional but less accurate. Free plan: 1,000 searches/month. Sign up at https://app.tavily.com/",
                     )}
                   >
                     <input
                       value={activeConfig.search.tavilyApiKey ?? ""}
+                      placeholder={text(locale, "tvly-… (可选，不填则自动回退到 Wikipedia)", "tvly-… (optional — falls back to Wikipedia automatically)")}
                       onChange={(event) =>
                         updateDraft((current) => ({ ...current, search: { ...current.search, tavilyApiKey: event.target.value } }))
                       }

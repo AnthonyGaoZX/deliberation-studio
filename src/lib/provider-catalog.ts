@@ -148,8 +148,8 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderMeta> = {
     kind: "deepseek",
     label: { zh: "DeepSeek", en: "DeepSeek" },
     shortDescription: {
-      zh: "支持 Chat 和 Reasoner。在本项目中，联网依赖外部搜索增强。",
-      en: "Supports Chat and Reasoner. In this app, live web search relies on external search augmentation.",
+      zh: "支持 Chat 和 Reasoner。DeepSeek 本身不内置联网能力，开启联网时系统会通过外部搜索引擎（推荐填写 Tavily API Key）为其提供实时资料。",
+      en: "Supports Chat and Reasoner. DeepSeek has no built-in web search — when search is enabled, the app fetches live results via an external engine. Adding a free Tavily API key is strongly recommended for reliable results.",
     },
     apiKeyHelp: {
       zh: "前往 DeepSeek 官方平台创建 API Key（外部网站）。",

@@ -220,6 +220,46 @@ async function searchWithDuckDuckGoHtml(query: string): Promise<SearchEvidence> 
   return buildEvidence("A web lookup found public pages relevant to this question.", citations, "duckduckgo");
 }
 
+async function searchWithWikipedia(query: string): Promise<SearchEvidence> {
+  const response = await fetchWithTimeout(
+    `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&utf8=&format=json`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`Wikipedia search failed: HTTP ${response.status}`);
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    query?: {
+      search?: Array<{ title: string; pageid: number; snippet: string }>;
+    };
+  };
+
+  const citations = (data.query?.search ?? [])
+    .slice(0, 6)
+    .map((item) => {
+      const url = `https://en.wikipedia.org/?curid=${item.pageid}`;
+      return {
+        title: item.title,
+        url,
+        domain: "en.wikipedia.org",
+        snippet: item.snippet.replace(/<\/?span[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&#039;/g, "'"),
+      };
+    });
+
+  if (!citations.length) {
+    throw new Error("Wikipedia search returned no results");
+  }
+
+  return buildEvidence("A Wikipedia search found encyclopedic details.", citations, "wikipedia");
+}
+
 async function searchWithSearxng(query: string): Promise<SearchEvidence> {
   const response = await fetchWithTimeout(
     `https://searx.be/search?q=${encodeURIComponent(query)}&format=json&language=en`,
@@ -286,8 +326,35 @@ export async function performSearch(query: string, tavilyApiKey?: string, fallba
       return await searchWithTavily(sanitizedQuery, tavilyApiKey.trim());
     }
   } catch (error) {
-    // continue to public fallback chain
+    // Tavily failed — continue to public fallback chain (Wikipedia first, most reliable in CN)
     const reason = error instanceof Error ? error.message : "Tavily search failed";
+    try {
+      return await searchWithWikipedia(sanitizedQuery);
+    } catch {
+      try {
+        return await searchWithDuckDuckGo(sanitizedQuery);
+      } catch {
+        try {
+          return await searchWithSearxng(sanitizedQuery);
+        } catch {
+          return {
+            summary: "This round could not fetch fresh web results.",
+            citations: [],
+            contextBlock: "Web search failed for this round.",
+            failed: true,
+            provider: "none",
+            failureReason: reason,
+          };
+        }
+      }
+    }
+  }
+
+  // Wikipedia is the most reliably reachable public API (no bot-blocking, no GFW issues).
+  // Try it first, then fall back to DuckDuckGo and SearXNG.
+  try {
+    return await searchWithWikipedia(sanitizedQuery);
+  } catch (wikiError) {
     try {
       return await searchWithDuckDuckGo(sanitizedQuery);
     } catch {
@@ -300,26 +367,9 @@ export async function performSearch(query: string, tavilyApiKey?: string, fallba
           contextBlock: "Web search failed for this round.",
           failed: true,
           provider: "none",
-          failureReason: reason,
+          failureReason: wikiError instanceof Error ? wikiError.message : "Search fallback failed",
         };
       }
-    }
-  }
-
-  try {
-    return await searchWithDuckDuckGo(sanitizedQuery);
-  } catch (duckError) {
-    try {
-      return await searchWithSearxng(sanitizedQuery);
-    } catch {
-      return {
-        summary: "This round could not fetch fresh web results.",
-        citations: [],
-        contextBlock: "Web search failed for this round.",
-        failed: true,
-        provider: "none",
-        failureReason: duckError instanceof Error ? duckError.message : "Search fallback failed",
-      };
     }
   }
 }
