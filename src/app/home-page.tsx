@@ -1,604 +1,55 @@
-﻿"use client";
+"use client";
 
-import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import type { CSSProperties } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { APP_COPY, buildHelpSnapshot, buildProviderSnapshot, t } from "@/lib/i18n";
-import { createDefaultConfig, createStarterSingleModelSetup, STORAGE_KEY } from "@/lib/default-config";
+import { createDefaultConfig, STORAGE_KEY } from "@/lib/default-config";
 import {
-  ENTERTAINMENT_PERSONA_IDS,
   JUDGE_PERSONA_IDS,
-  STANDARD_DEBATER_PERSONA_IDS,
   getPersonaPreset,
 } from "@/lib/persona-presets";
-import { describeModelVariant, getModelDocsUrl, getModelPresets, hasModelPreset } from "@/lib/model-presets";
 import { createParticipant, PROVIDER_CATALOG, stanceLabel } from "@/lib/provider-catalog";
 import type {
   DebateConfig,
   DebateStance,
-  DebateTurn,
-  FailedAction,
   Locale,
   ParticipantConfig,
   ProviderKind,
-  RoundEvaluation,
-  RunStage,
-  RunStatus,
-  SearchEvidence,
 } from "@/types/debate";
-
-type ReadingTheme = "warm-light" | "soft-dark" | "graphite" | "paper";
-type ToggleOption<T extends string> = { value: T; label: string };
-type ProviderConnection = {
-  apiKey: string;
-  baseUrl: string;
-};
-
-type ProviderConnectionMap = Record<ProviderKind, ProviderConnection>;
-type ParticipantCheckState = {
-  status: "idle" | "loading" | "success" | "error";
-  mode: "output" | "search";
-  message: string;
-};
-
-type AppStorage = {
-  config?: DebateConfig;
-  theme?: "light" | "dark";
-  locale?: Locale;
-  providerConnections?: ProviderConnectionMap;
-};
+import type { AppStorage, ProviderConnectionMap, ReadingTheme } from "@/types/ui";
+import { text, statusLabel, stageLabel } from "@/lib/text-helpers";
+import { sanitizeApiKeyInput, sanitizeBaseUrlInput } from "@/lib/sanitize";
+import {
+  applyConfigConstraints,
+  buildPersonaDescription,
+  buildSingleParticipants,
+  createDefaultProviderConnections,
+  getDebaterPersonaOptions,
+  migrateConfig,
+  normalizeParticipantConfig,
+} from "@/lib/config-logic";
+import { buildCsv, downloadFile } from "@/lib/export-utils";
+import { useDebateSession } from "@/hooks/use-debate-session";
+import { ToggleGroup } from "@/components/toggle-group";
+import { Field, ModelVariantField } from "@/components/field";
+import { TrendChart } from "@/components/trend-chart";
+import { TurnBody } from "@/components/turn-body";
+import { ParticipantCheckControls } from "@/components/participant-check";
 
 const providerKinds = Object.keys(PROVIDER_CATALOG) as ProviderKind[];
-const simplePersonaAllowList = ["balanced_standard", "pragmatist", "skeptic", "risk_averse"] as const;
-
-function text(locale: Locale, zh: string, en: string) {
-  return locale === "zh" ? zh : en;
-}
-
-function createDefaultProviderConnections(): ProviderConnectionMap {
-  return providerKinds.reduce(
-    (accumulator, kind) => {
-      accumulator[kind] = {
-        apiKey: "",
-        baseUrl: PROVIDER_CATALOG[kind].defaultBaseUrl,
-      };
-      return accumulator;
-    },
-    {} as ProviderConnectionMap,
-  );
-}
-
-function normalizeAsciiPunctuation(value: string) {
-  return value
-    .replace(/：/g, ":")
-    .replace(/／/g, "/")
-    .replace(/．/g, ".")
-    .replace(/，/g, ",")
-    .replace(/　/g, " ");
-}
-
-function sanitizeApiKeyInput(value: string) {
-  return normalizeAsciiPunctuation(value)
-    .replace(/[^\x21-\x7E]/g, "")
-    .trim()
-    .replace(/^api(?:\s|-|_)?key\s*[:：]\s*/i, "")
-    .replace(/^bearer\s+/i, "")
-    .replace(/^["']|["']$/g, "")
-    .trim();
-}
-
-function sanitizeBaseUrlInput(value: string, provider: ProviderKind, allowEmpty = true) {
-  const normalized = normalizeAsciiPunctuation(value)
-    .replace(/[^\x20-\x7E]/g, "")
-    .trim()
-    .replace(/^base\s*url\s*[:：]\s*/i, "");
-
-  if (!normalized) {
-    return allowEmpty ? "" : PROVIDER_CATALOG[provider].defaultBaseUrl;
-  }
-
-  try {
-    return new URL(normalized).toString();
-  } catch {
-    return normalized;
-  }
-}
-
-function roleNameForParticipant(stance: DebateStance, locale: Locale, isJudge = false) {
-  if (isJudge) return text(locale, "裁判", "Judge");
-  if (stance === "free") return text(locale, "自由立场", "Free stance");
-  return stanceLabel(stance, locale);
-}
-
-function normalizeParticipantConfig(participant: ParticipantConfig, locale?: Locale): ParticipantConfig {
-  const nextPersona =
-    participant.persona === "supporter" ||
-    participant.persona === "opposer" ||
-    participant.template === "supporter" ||
-    participant.template === "opposer"
-      ? "balanced_standard"
-      : participant.persona === "balanced_judge" || participant.template === "balanced_judge"
-        ? "objective_judge"
-        : participant.persona ?? participant.template ?? "balanced_standard";
-
-  return {
-    ...participant,
-    stance: participant.stance ?? participant.side ?? "free",
-    persona: nextPersona,
-    roleName:
-      locale == null
-        ? participant.roleName
-        : roleNameForParticipant(participant.stance ?? participant.side ?? "free", locale, JUDGE_PERSONA_IDS.includes(nextPersona)),
-    personaDescription:
-      participant.personaDescription ??
-      participant.templateDescription ??
-      getPersonaPreset(nextPersona)?.prompt.zh ??
-      "",
-  };
-}
-
-function buildPersonaDescription(persona: ParticipantConfig["persona"], locale: Locale, existing?: string) {
-  if (persona === "custom") {
-    return existing ?? "";
-  }
-
-  return getPersonaPreset(persona)?.prompt[locale] ?? "";
-}
-
-function migrateConfig(config: DebateConfig): DebateConfig {
-  return {
-    ...config,
-    participants: config.participants.map((participant) => normalizeParticipantConfig(participant, config.locale)),
-  };
-}
-
-function resolveParticipantConnection(
-  participant: ParticipantConfig,
-  providerConnections: ProviderConnectionMap,
-): ParticipantConfig {
-  const providerConnection = providerConnections[participant.provider];
-  return {
-    ...participant,
-    apiKey: sanitizeApiKeyInput(providerConnection?.apiKey ?? ""),
-    baseUrl: sanitizeBaseUrlInput(providerConnection?.baseUrl ?? "", participant.provider, false),
-  };
-}
-
-function resolveConfigForRun(config: DebateConfig, providerConnections: ProviderConnectionMap): DebateConfig {
-  return {
-    ...config,
-    participants: config.participants.map((participant) => resolveParticipantConnection(participant, providerConnections)),
-  };
-}
-
-function requiredProvidersForConfig(config: DebateConfig) {
-  return [...new Set(config.participants.map((participant) => participant.provider))];
-}
-
-function ToggleGroup<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T;
-  onChange: (value: T) => void;
-  options: Array<ToggleOption<T>>;
-}) {
-  return (
-    <div className="switch-group" role="tablist">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          className={`switch-option ${value === option.value ? "switch-option-active" : ""}`}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  hint,
-  children,
-  full = false,
-}: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
-  full?: boolean;
-}) {
-  return (
-    <label className={full ? "full-field" : "field"}>
-      <span>
-        <strong>{label}</strong>
-      </span>
-      {hint ? <span className="field-hint">{hint}</span> : null}
-      {children}
-    </label>
-  );
-}
-
-function ModelVariantField({
-  provider,
-  model,
-  locale,
-  label,
-  onModelChange,
-}: {
-  provider: ProviderKind;
-  model: string;
-  locale: Locale;
-  label: string;
-  onModelChange: (model: string) => void;
-}) {
-  const docsUrl = getModelDocsUrl(provider);
-  const presets = getModelPresets(provider);
-  const selectValue = hasModelPreset(provider, model) ? model : "__custom__";
-  const customLabel = text(locale, "手动填写", "Custom");
-
-  return (
-    <Field
-      label={label}
-      hint={describeModelVariant(provider, model, locale)}
-      full
-    >
-      <div className="stacked-control">
-        <select
-          aria-label={label}
-          value={selectValue}
-          onChange={(event) => {
-            if (event.target.value !== "__custom__") {
-              onModelChange(event.target.value);
-            }
-          }}
-        >
-          {presets.map((preset) => (
-            <option key={preset.value} value={preset.value}>
-              {preset.label}
-            </option>
-          ))}
-          <option value="__custom__">{customLabel}</option>
-        </select>
-        <input
-          aria-label={`${label} ${text(locale, "自定义", "custom")}`}
-          value={model}
-          placeholder={PROVIDER_CATALOG[provider].defaultModel}
-          onChange={(event) => onModelChange(event.target.value)}
-        />
-        <div className="compact-note">
-          <a href={docsUrl} target="_blank" rel="noreferrer">
-            {text(locale, "查看该厂商官方模型名称", "Check this provider's official model names")}
-          </a>
-        </div>
-      </div>
-    </Field>
-  );
-}
-
-function chartPath(points: Array<{ x: number; y: number }>) {
-  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-}
-
-function statusLabel(status: RunStatus, locale: Locale) {
-  const labels: Record<RunStatus, Record<Locale, string>> = {
-    idle: { zh: "未开始", en: "Idle" },
-    running: { zh: "进行中", en: "Running" },
-    paused: { zh: "已暂停", en: "Paused" },
-    completed: { zh: "已完成", en: "Completed" },
-  };
-  return labels[status][locale];
-}
-
-function stageLabel(stage: RunStage, locale: Locale) {
-  const labels: Record<RunStage, Record<Locale, string>> = {
-    opening: { zh: "开场陈述", en: "Opening" },
-    response: { zh: "回应阶段", en: "Response" },
-    moderator: { zh: "主持纠偏", en: "Moderator" },
-    score: { zh: "裁判评分", en: "Scoring" },
-    synthesis: { zh: "综合整理", en: "Synthesis" },
-    judge: { zh: "最终总结", en: "Final summary" },
-    done: { zh: "全部结束", en: "Done" },
-  };
-  return labels[stage][locale];
-}
-
-function TurnBody({ turn }: { turn: DebateTurn }) {
-  return (
-    <div className="markdown-copy">
-      <ReactMarkdown>{turn.content}</ReactMarkdown>
-    </div>
-  );
-}
-
-function TrendChart({
-  evaluations,
-  enabled,
-  locale,
-}: {
-  evaluations: RoundEvaluation[];
-  enabled: boolean;
-  locale: Locale;
-}) {
-  if (!enabled) return null;
-  if (!evaluations.length) {
-    return (
-      <div className="chart-card">
-        <strong>{text(locale, "动态胜率会显示在这里", "Dynamic win-rate trend appears here")}</strong>
-        <p>{text(locale, "只有在动态停止模式真正运行后，裁判才会在每次辩手发言后更新曲线。", "The curve updates after each debater speech once dynamic-stop mode is running.")}</p>
-      </div>
-    );
-  }
-
-  const width = 520;
-  const height = 200;
-  const padding = 28;
-  const usableWidth = width - padding * 2;
-  const usableHeight = height - padding * 2;
-  const supportPoints = evaluations.map((item, index) => ({
-    x: padding + (evaluations.length === 1 ? usableWidth / 2 : (usableWidth / (evaluations.length - 1)) * index),
-    y: padding + usableHeight - (item.supportWinRate / 100) * usableHeight,
-  }));
-  const opposePoints = evaluations.map((item, index) => ({
-    x: padding + (evaluations.length === 1 ? usableWidth / 2 : (usableWidth / (evaluations.length - 1)) * index),
-    y: padding + usableHeight - (item.opposeWinRate / 100) * usableHeight,
-  }));
-
-  return (
-    <div className="chart-card">
-      <div className="chart-head">
-        <strong>{text(locale, "动态胜率走势", "Dynamic win-rate trend")}</strong>
-        <p>{text(locale, "系统会在每次辩手发言后重新估算当前哪一方更占优势。", "After each debater speech, the system re-estimates which side currently has the edge.")}</p>
-      </div>
-      <svg viewBox={`0 0 ${width} ${height}`} className="trend-chart" aria-label="win rate chart">
-        {[0, 25, 50, 75, 100].map((tick) => {
-          const y = padding + usableHeight - (tick / 100) * usableHeight;
-          return (
-            <g key={tick}>
-              <line x1={padding} x2={width - padding} y1={y} y2={y} className="chart-grid" />
-              <text x={0} y={y + 4} className="chart-label">
-                {tick}%
-              </text>
-            </g>
-          );
-        })}
-        <path d={chartPath(supportPoints)} className="chart-line chart-line-support" />
-        <path d={chartPath(opposePoints)} className="chart-line chart-line-oppose" />
-      </svg>
-    </div>
-  );
-}
-
-function buildSingleParticipants(
-  locale: Locale,
-  provider: ProviderKind,
-  roleCount: number,
-  shared?: Partial<ParticipantConfig>,
-  existing: ParticipantConfig[] = [],
-) {
-  const generated = createStarterSingleModelSetup(locale, provider, Math.max(2, roleCount - 1));
-  const base = normalizeParticipantConfig((shared as ParticipantConfig) ?? existing[0] ?? createParticipant(provider, 0, locale), locale);
-  const providerLabel = PROVIDER_CATALOG[provider].label[locale];
-  return generated.map((generatedRole, index) => {
-    const current = existing[index] ? normalizeParticipantConfig(existing[index], locale) : undefined;
-    const isJudge = index === generated.length - 1;
-    const fallbackPersona = isJudge ? "objective_judge" : index === 0 ? "balanced_standard" : generatedRole.persona;
-    const persona = current?.persona ?? fallbackPersona;
-    const safePersona = isJudge
-      ? JUDGE_PERSONA_IDS.includes(persona)
-        ? persona
-        : "objective_judge"
-      : persona;
-    const personaPreset = getPersonaPreset(safePersona);
-
-    return {
-      ...generatedRole,
-      id: current?.id ?? generatedRole.id,
-      provider: base.provider ?? provider,
-      model: base.model ?? generatedRole.model,
-      apiKey: base.apiKey ?? "",
-      baseUrl: base.baseUrl ?? generatedRole.baseUrl,
-      enableSearch: current?.enableSearch ?? base.enableSearch ?? true,
-      includeInFinalSummary: isJudge ? true : current?.includeInFinalSummary ?? true,
-      label: isJudge ? text(locale, "中立裁判", "Neutral judge") : `${providerLabel} ${index + 1}`,
-      roleName: roleNameForParticipant(
-        isJudge
-          ? "neutral"
-          : current?.stance === "neutral"
-            ? generatedRole.stance
-            : current?.stance ?? generatedRole.stance,
-        locale,
-        isJudge,
-      ),
-      stance:
-        isJudge
-          ? "neutral"
-          : current?.stance === "neutral"
-            ? generatedRole.stance
-            : current?.stance ?? generatedRole.stance,
-      persona: safePersona,
-      personaDescription: current?.personaDescription ?? personaPreset?.prompt[locale] ?? generatedRole.personaDescription,
-      systemPrompt: current?.systemPrompt ?? "",
-    } satisfies ParticipantConfig;
-  });
-}
-
-function getDebaterPersonaOptions(config: DebateConfig) {
-  if (config.discussionType === "entertainment") return ENTERTAINMENT_PERSONA_IDS;
-  const standard = STANDARD_DEBATER_PERSONA_IDS;
-  if (config.appMode === "simple") {
-    return standard.filter((id) => simplePersonaAllowList.includes(id as (typeof simplePersonaAllowList)[number]));
-  }
-  return standard;
-}
-
-function applyConfigConstraints(config: DebateConfig, locale: Locale): DebateConfig {
-  let next = migrateConfig({ ...config, locale });
-
-  if (next.appMode === "simple") {
-    next = {
-      ...next,
-      debateMode: "single_model_personas",
-      singleModelRoleCount: 3,
-      discussionPattern: "structured_discussion",
-    };
-  }
-
-  if (next.discussionType === "research") {
-    next = {
-      ...next,
-      search: {
-        ...next.search,
-        enabled: true,
-        mode: next.search.mode === "off" ? "hybrid" : next.search.mode,
-        continuePerRound: true,
-      },
-    };
-  }
-
-  if (next.discussionType === "entertainment") {
-    next = {
-      ...next,
-    };
-  }
-
-  if (next.debateMode === "single_model_personas") {
-    if (next.participants.length) {
-      const provider = next.participants[0]?.provider ?? "openai";
-      next = {
-        ...next,
-        participants: buildSingleParticipants(locale, provider, next.singleModelRoleCount, next.participants[0], next.participants),
-      };
-    }
-  } else if (next.participants.length >= 1) {
-    const normalized = next.participants.map((participant) => normalizeParticipantConfig(participant, locale));
-    const existingJudge = normalized.findLast((participant) => JUDGE_PERSONA_IDS.includes(participant.persona));
-    const judge: ParticipantConfig =
-      existingJudge ??
-      {
-        ...createParticipant(normalized[0].provider, normalized.length, locale),
-        label: text(locale, "中立裁判", "Neutral judge"),
-        roleName: text(locale, "裁判", "Judge"),
-        stance: "neutral",
-        persona: "objective_judge",
-        personaDescription: getPersonaPreset("objective_judge")?.prompt[locale] ?? "",
-        apiKey: normalized[0].apiKey,
-        model: normalized[0].model,
-        baseUrl: normalized[0].baseUrl,
-        includeInFinalSummary: true,
-      };
-
-    const debaters = normalized
-      .filter((participant) => participant.id !== existingJudge?.id)
-      .map((participant, index) => ({
-        ...participant,
-        stance:
-          next.discussionType === "research"
-            ? "free"
-            : participant.stance === "neutral"
-              ? index % 2 === 0
-                ? "support"
-                : "oppose"
-              : participant.stance,
-        persona: JUDGE_PERSONA_IDS.includes(participant.persona) ? "balanced_standard" : participant.persona,
-        roleName: roleNameForParticipant(
-          next.discussionType === "research"
-            ? "free"
-            : participant.stance === "neutral"
-              ? index % 2 === 0
-                ? "support"
-                : "oppose"
-              : participant.stance,
-          locale,
-        ),
-      }));
-
-    next = {
-      ...next,
-      participants: [
-        ...debaters,
-        {
-          ...judge,
-          stance: "neutral",
-          roleName: roleNameForParticipant("neutral", locale, true),
-          includeInFinalSummary: true,
-        },
-      ],
-    };
-  }
-
-  next = {
-    ...next,
-    judgeId: next.participants[next.participants.length - 1]?.id,
-    moderatorId: next.participants[next.participants.length - 1]?.id,
-  };
-
-  return next;
-}
-
-function buildCsv(transcript: DebateTurn[]) {
-  return [
-    ["round", "phase", "speaker", "role", "position", "reason", "evidence", "response", "conclusion"].join(","),
-    ...transcript.map((turn) =>
-      [
-        turn.round,
-        turn.phase,
-        `"${turn.speaker}"`,
-        `"${turn.roleName}"`,
-        `"${turn.currentPosition ?? ""}"`,
-        `"${turn.keyReason.replaceAll('"', '""')}"`,
-        `"${turn.evidence.replaceAll('"', '""')}"`,
-        `"${turn.responseToOthers.replaceAll('"', '""')}"`,
-        `"${turn.interimConclusion.replaceAll('"', '""')}"`,
-      ].join(","),
-    ),
-  ].join("\n");
-}
-
-function downloadFile(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
 
 export default function HomePage() {
   const [locale, setLocale] = useState<Locale>("zh");
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [draftConfig, setDraftConfig] = useState<DebateConfig>(() => createDefaultConfig("zh", "simple"));
   const [providerConnections, setProviderConnections] = useState<ProviderConnectionMap>(() => createDefaultProviderConnections());
-  const [sessionConfig, setSessionConfig] = useState<DebateConfig | null>(null);
-  const [status, setStatus] = useState<RunStatus>("idle");
-  const [stage, setStage] = useState<RunStage>("opening");
-  const [round, setRound] = useState(1);
-  const [speakerIndex, setSpeakerIndex] = useState(0);
-  const [transcript, setTranscript] = useState<DebateTurn[]>([]);
-  const [sharedSearch, setSharedSearch] = useState<SearchEvidence | null>(null);
-  const [rollingSummary, setRollingSummary] = useState("");
-  const [summarizedTurnCount, setSummarizedTurnCount] = useState(0);
-  const [error, setError] = useState("");
-  const [loadingLabel, setLoadingLabel] = useState("");
-  const [failedAction, setFailedAction] = useState<FailedAction | null>(null);
-  const [draftUserMessage, setDraftUserMessage] = useState("");
-  const [runningSince, setRunningSince] = useState<number | null>(null);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [showHelp, setShowHelp] = useState(false);
-  const [participantChecks, setParticipantChecks] = useState<Record<string, ParticipantCheckState>>({});
 
   const [readingTheme, setReadingTheme] = useState<ReadingTheme>("soft-dark");
   const [fontSize, setFontSize] = useState(18);
   const [lineHeight, setLineHeight] = useState(1.7);
   const [paragraphGap, setParagraphGap] = useState(18);
   const [textWidth, setTextWidth] = useState(74);
-
-  const processingRef = useRef(false);
-  const requestAbortRef = useRef<AbortController | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   const activeConfig = useMemo(() => applyConfigConstraints(draftConfig, locale), [draftConfig, locale]);
   const helpSections = useMemo(() => buildHelpSnapshot(locale), [locale]);
@@ -607,11 +58,14 @@ export default function HomePage() {
   const configurableProviders = activeConfig.appMode === "simple" ? providerKinds.filter((kind) => kind !== "custom") : providerKinds;
   const judge = activeConfig.participants.at(-1);
   const debaters = activeConfig.participants.slice(0, Math.max(0, activeConfig.participants.length - 1));
-  const evaluations = useMemo(() => transcript.flatMap((turn) => (turn.evaluation ? [turn.evaluation] : [])), [transcript]);
+
+  const session = useDebateSession(activeConfig, providerConnections, locale);
+
+  const evaluations = useMemo(() => session.transcript.flatMap((turn) => (turn.evaluation ? [turn.evaluation] : [])), [session.transcript]);
   const visibleSearchSummaryTurnIds = useMemo(() => {
     const seen = new Set<string>();
     return new Set(
-      transcript.flatMap((turn) => {
+      session.transcript.flatMap((turn) => {
         const summary = turn.searchSummary?.trim();
         if (!summary) return [];
         if (turn.searchFailed || !seen.has(summary)) {
@@ -621,7 +75,7 @@ export default function HomePage() {
         return [];
       }),
     );
-  }, [transcript]);
+  }, [session.transcript]);
 
   const showExternalSearchField =
     activeConfig.search.enabled &&
@@ -669,68 +123,11 @@ export default function HomePage() {
     );
   }, [draftConfig, theme, locale, providerConnections]);
 
-  useEffect(() => {
-    if (status !== "running") return;
-    const timer = window.setInterval(() => {
-      const now = Date.now();
-      const nextElapsed = runningSince ? now - runningSince : elapsedMs + 1000;
-      setElapsedMs(nextElapsed);
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [status, runningSince, elapsedMs]);
-
-  async function apiPost(payload: unknown, trackAbort = true) {
-    const controller = new AbortController();
-    if (trackAbort) {
-      requestAbortRef.current = controller;
-    }
-
-    try {
-      const response = await fetch("/api/debate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-
-      let json: unknown = null;
-      try {
-        json = await response.json();
-      } catch {
-        json = null;
-      }
-
-      if (!response.ok) {
-        const message =
-          typeof json === "object" && json && "error" in json && typeof (json as { error?: unknown }).error === "string"
-            ? (json as { error: string }).error
-            : text(locale, "请求失败，请检查 API 设置或网络状态。", "Request failed. Please check your API settings or network.");
-        throw new Error(message);
-      }
-
-      return json;
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        throw error;
-      }
-      throw new Error(
-        error instanceof Error
-          ? error.message
-          : text(locale, "网络请求失败，请稍后重试。", "Network request failed. Please try again."),
-      );
-    } finally {
-      if (trackAbort) {
-        requestAbortRef.current = null;
-      }
-    }
-  }
-
   function updateDraft(updater: (config: DebateConfig) => DebateConfig) {
     setDraftConfig((current) => updater(current));
   }
 
-  function updateProviderConnection(provider: ProviderKind, updater: (current: ProviderConnection) => ProviderConnection) {
+  function updateProviderConnection(provider: ProviderKind, updater: (current: { apiKey: string; baseUrl: string }) => { apiKey: string; baseUrl: string }) {
     setProviderConnections((current) => ({
       ...current,
       [provider]: updater(current[provider] ?? createDefaultProviderConnections()[provider]),
@@ -837,358 +234,6 @@ export default function HomePage() {
       );
     });
   }
-
-  async function maybeSummarizeIfNeeded(config: DebateConfig, nextTranscript: DebateTurn[], nextSummary: string) {
-    if (nextTranscript.length - summarizedTurnCount < 12 || nextTranscript.length < 16) {
-      return nextSummary;
-    }
-
-    const result = (await apiPost({
-      action: "summarize",
-      config,
-      transcript: nextTranscript,
-      rollingSummary: nextSummary,
-    })) as { summary: string };
-
-    setSummarizedTurnCount(nextTranscript.length);
-    setRollingSummary(result.summary);
-    return result.summary;
-  }
-
-  async function startDiscussion() {
-    const constrainedConfig = applyConfigConstraints(activeConfig, locale);
-    const providersInUse = requiredProvidersForConfig(constrainedConfig);
-    const missingProvider = providersInUse.find((provider) => !(providerConnections[provider]?.apiKey ?? "").trim());
-    const config = resolveConfigForRun(constrainedConfig, providerConnections);
-
-    if (!config.topic.trim()) {
-      setError(text(locale, "请先输入要讨论的问题。", "Please enter your question first."));
-      return;
-    }
-    if (!config.participants.length) {
-      setError(text(locale, "请先添加至少一个模型。", "Please add at least one model first."));
-      return;
-    }
-    if (missingProvider) {
-      setError(
-        text(
-          locale,
-          `请先在顶部的全局模型配置区填写 ${PROVIDER_CATALOG[missingProvider].label[locale]} 的 API Key。`,
-          `Please fill in the API key for ${PROVIDER_CATALOG[missingProvider].label[locale]} in the global model settings first.`,
-        ),
-      );
-      return;
-    }
-
-    setError("");
-    setTranscript([]);
-    setSharedSearch(null);
-    setRollingSummary("");
-    setSummarizedTurnCount(0);
-    setFailedAction(null);
-    setStatus("running");
-    setStage("opening");
-    setRound(1);
-    setSpeakerIndex(0);
-    setLoadingLabel(text(locale, "正在准备讨论…", "Preparing the discussion..."));
-    setElapsedMs(0);
-    setRunningSince(Date.now());
-
-    try {
-      const prepared = (await apiPost({ action: "prepare", config })) as {
-        config: DebateConfig;
-        sharedSearch: SearchEvidence | null;
-      };
-      setSessionConfig(migrateConfig(prepared.config));
-      setSharedSearch(prepared.sharedSearch);
-    } catch (cause) {
-      setSessionConfig(null);
-      setStatus("paused");
-      setLoadingLabel("");
-      setError(cause instanceof Error ? cause.message : text(locale, "准备失败，请检查配置后重试。", "Preparation failed. Please review settings and retry."));
-    }
-  }
-
-  async function runParticipantCheck(participantId: string, mode: "output" | "search") {
-    const constrainedConfig = applyConfigConstraints(activeConfig, locale);
-    const config = resolveConfigForRun(
-      {
-        ...constrainedConfig,
-        topic: constrainedConfig.topic.trim() || text(locale, "请用一句话说明今天的 AI 模型动态。", "Give one short update about current AI model news."),
-      },
-      providerConnections,
-    );
-    const participant = config.participants.find((item) => item.id === participantId);
-
-    if (!participant) {
-      setParticipantChecks((current) => ({
-        ...current,
-        [participantId]: {
-          status: "error",
-          mode,
-          message: text(locale, "没有找到这个角色。", "This role could not be found."),
-        },
-      }));
-      return;
-    }
-
-    if (!participant.apiKey.trim()) {
-      setParticipantChecks((current) => ({
-        ...current,
-        [participantId]: {
-          status: "error",
-          mode,
-          message: text(
-            locale,
-            `请先在上方填写 ${PROVIDER_CATALOG[participant.provider].label[locale]} 的 API Key。`,
-            `Please fill in the ${PROVIDER_CATALOG[participant.provider].label[locale]} API key above first.`,
-          ),
-        },
-      }));
-      return;
-    }
-
-    setParticipantChecks((current) => ({
-      ...current,
-      [participantId]: {
-        status: "loading",
-        mode,
-        message:
-          mode === "search"
-            ? text(locale, "正在测试联网输出…", "Testing live web output...")
-            : text(locale, "正在测试基础输出…", "Testing basic output..."),
-      },
-    }));
-
-    try {
-      const result = (await apiPost(
-        {
-          action: "check",
-          config,
-          participantId,
-          mode,
-        },
-        false,
-      )) as {
-        ok: boolean;
-        mode: "output" | "search";
-        text: string;
-        searchProvider?: string;
-        citations?: Array<{ url: string }>;
-      };
-
-      const citationCount = result.citations?.length ?? 0;
-      const successMessage =
-        mode === "search"
-          ? text(
-              locale,
-              `联网测试通过。${result.searchProvider === "native" ? "已走模型原生联网。" : "已走外部搜索增强。"}${citationCount ? ` 发现 ${citationCount} 条来源。` : ""}`,
-              `Web test passed. ${result.searchProvider === "native" ? "Native provider search was used." : "External search augmentation was used."}${citationCount ? ` ${citationCount} source link(s) found.` : ""}`,
-            )
-          : text(locale, "基础输出测试通过。", "Basic output test passed.");
-
-      setParticipantChecks((current) => ({
-        ...current,
-        [participantId]: {
-          status: "success",
-          mode,
-          message: `${successMessage} ${result.text}`.trim(),
-        },
-      }));
-    } catch (cause) {
-      setParticipantChecks((current) => ({
-        ...current,
-        [participantId]: {
-          status: "error",
-          mode,
-          message:
-            cause instanceof Error
-              ? cause.message
-              : text(locale, "测试失败，请检查 API 配置后再试。", "Test failed. Please check the API configuration and try again."),
-        },
-      }));
-    }
-  }
-
-  function renderParticipantCheckControls(participant: ParticipantConfig) {
-    const checkState = participantChecks[participant.id];
-    const isLoading = checkState?.status === "loading";
-
-    return (
-      <div className="mini-actions">
-        <button
-          type="button"
-          className="button button-secondary"
-          disabled={status === "running" || isLoading}
-          onClick={() => void runParticipantCheck(participant.id, "output")}
-        >
-          {text(locale, "测试输出", "Test output")}
-        </button>
-        <button
-          type="button"
-          className="button button-secondary"
-          disabled={status === "running" || isLoading}
-          onClick={() => void runParticipantCheck(participant.id, "search")}
-        >
-          {text(locale, "测试联网", "Test web search")}
-        </button>
-        {checkState ? (
-          <p className={checkState.status === "error" ? "score-note" : "search-note"}>
-            {checkState.message}
-          </p>
-        ) : null}
-      </div>
-    );
-  }
-
-  function addUserComment() {
-    if (!draftUserMessage.trim()) return;
-    setTranscript((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        participantId: "user",
-        speaker: text(locale, "你", "You"),
-        roleName: text(locale, "用户补充", "User note"),
-        phase: "user",
-        round,
-        keyReason: draftUserMessage.trim(),
-        evidence: "",
-        responseToOthers: "",
-        interimConclusion: "",
-        content: draftUserMessage.trim(),
-        displaySections: [{ title: text(locale, "你的补充", "Your note"), body: draftUserMessage.trim() }],
-      },
-    ]);
-    setDraftUserMessage("");
-  }
-
-  function advanceAfterTurn(evaluation?: RoundEvaluation) {
-    if (!sessionConfig) return;
-    const speakingCount = Math.max(1, sessionConfig.participants.length - 1);
-    const lastSpeakerIndex = speakingCount - 1;
-
-    if (stage === "opening" || stage === "response") {
-      if (sessionConfig.discussionPattern === "judge_stop") {
-        setStage("score");
-        return;
-      }
-
-      if (speakerIndex < lastSpeakerIndex) {
-        setSpeakerIndex((value) => value + 1);
-      } else {
-        setStage("moderator");
-        setSpeakerIndex(0);
-      }
-      return;
-    }
-
-    if (stage === "moderator") {
-      if (round >= sessionConfig.rounds) {
-        setStage("judge");
-      } else {
-        setRound((value) => value + 1);
-        setStage("response");
-      }
-      return;
-    }
-
-    if (stage === "score") {
-      if (evaluation?.shouldStop) {
-        setStage("judge");
-        return;
-      }
-
-      if (sessionConfig.discussionPattern === "judge_stop") {
-        if (speakerIndex < lastSpeakerIndex) {
-          setSpeakerIndex((value) => value + 1);
-          setStage(round === 1 ? "opening" : "response");
-        } else {
-          setStage("moderator");
-          setSpeakerIndex(0);
-        }
-        return;
-      }
-
-      if (round >= sessionConfig.rounds) {
-        setStage("judge");
-      } else {
-        setRound((value) => value + 1);
-        setStage("response");
-      }
-      return;
-    }
-
-    if (stage === "judge") {
-      setStatus("completed");
-      setStage("done");
-      setLoadingLabel("");
-    }
-  }
-
-  async function executeCurrentStep() {
-    if (!sessionConfig || status !== "running" || processingRef.current) return;
-    processingRef.current = true;
-    try {
-      const activeJudge = sessionConfig.participants.at(-1);
-      const activeDebaters = sessionConfig.participants.slice(0, Math.max(0, sessionConfig.participants.length - 1));
-      const speaker =
-        stage === "moderator" || stage === "score" || stage === "judge"
-          ? activeJudge
-          : activeDebaters[Math.min(speakerIndex, Math.max(0, activeDebaters.length - 1))];
-      if (!speaker) throw new Error("No active participant found.");
-
-      setLoadingLabel(text(locale, `正在生成：${speaker.label}`, `Generating: ${speaker.label}`));
-      const result = (await apiPost({
-        action: "turn",
-        config: sessionConfig,
-        participantId: speaker.id,
-        phase: stage,
-        round,
-        transcript,
-        rollingSummary,
-        sharedSearch,
-      })) as { turn: DebateTurn; evaluation?: RoundEvaluation };
-
-      const nextTranscript = [...transcript, result.turn];
-      setTranscript(nextTranscript);
-
-      const nextSummary = await maybeSummarizeIfNeeded(sessionConfig, nextTranscript, rollingSummary);
-      if (nextSummary !== rollingSummary) setRollingSummary(nextSummary);
-
-      advanceAfterTurn(result.evaluation);
-    } catch (cause) {
-      if (cause instanceof Error && cause.name === "AbortError") {
-        return;
-      }
-      setStatus("paused");
-      setLoadingLabel("");
-      setError(cause instanceof Error ? cause.message : text(locale, "本轮失败。你可以重试或跳过。", "This step failed. You can retry or skip."));
-
-      const activeJudge = sessionConfig.participants.at(-1);
-      const activeDebaters = sessionConfig.participants.slice(0, Math.max(0, sessionConfig.participants.length - 1));
-      const speaker =
-        stage === "moderator" || stage === "score" || stage === "judge"
-          ? activeJudge
-          : activeDebaters[Math.min(speakerIndex, Math.max(0, activeDebaters.length - 1))];
-
-      if (speaker) {
-        setFailedAction({
-          kind: stage === "judge" ? "judge" : stage === "score" ? "score" : stage === "moderator" ? "moderator" : "participant",
-          participantId: speaker.id,
-          round,
-        });
-      }
-    } finally {
-      processingRef.current = false;
-    }
-  }
-
-  useEffect(() => {
-    if (status === "running" && sessionConfig) {
-      void executeCurrentStep();
-    }
-  }, [status, stage, round, speakerIndex, sessionConfig]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <main className="page-shell">
@@ -1550,7 +595,7 @@ export default function HomePage() {
                       <p className="muted">
                         {isJudge
                           ? text(locale, "裁判必须保持中立。你可以切换裁判风格，但不能改成立场。", "The judge must remain neutral. You can change judge style, but not judge stance.")
-                          : text(locale, "你可以自由组合立场和人格，比如“支持方 + 激进型”。", "You can freely combine stance and persona, e.g. “Support + Aggressive explorer”.")}
+                          : text(locale, "你可以自由组合立场和人格，比如\u201c支持方 + 激进型\u201d。", "You can freely combine stance and persona, e.g. \u201cSupport + Aggressive explorer\u201d.")}
                       </p>
                       <div className="field-grid">
                         {!isJudge && activeConfig.discussionType !== "research" ? (
@@ -1655,7 +700,13 @@ export default function HomePage() {
                           </Field>
                         ) : null}
                       </div>
-                      {renderParticipantCheckControls(role)}
+                      <ParticipantCheckControls
+                        participant={role}
+                        locale={locale}
+                        status={session.status}
+                        checkState={session.participantChecks[role.id]}
+                        onCheck={session.runParticipantCheck}
+                      />
                     </div>
                   );
                 })}
@@ -1699,7 +750,7 @@ export default function HomePage() {
                     <div className="field-grid">
                       <Field
                         label={text(locale, "模型厂商", "Provider")}
-                        hint={text(locale, "多模型模式下，厂商由上方“添加”按钮决定，这里仅展示不可修改。", "In multi-model mode, the provider is fixed by the add button above and shown here as read-only.")}
+                        hint={text(locale, "多模型模式下，厂商由上方\u201c添加\u201d按钮决定，这里仅展示不可修改。", "In multi-model mode, the provider is fixed by the add button above and shown here as read-only.")}
                       >
                         <select
                           value={role.provider}
@@ -1828,7 +879,13 @@ export default function HomePage() {
                         {text(locale, "移除这个辩手", "Remove this debater")}
                       </button>
                     </div>
-                    {renderParticipantCheckControls(role)}
+                    <ParticipantCheckControls
+                      participant={role}
+                      locale={locale}
+                      status={session.status}
+                      checkState={session.participantChecks[role.id]}
+                      onCheck={session.runParticipantCheck}
+                    />
                   </div>
                 );
               })}
@@ -1952,7 +1009,13 @@ export default function HomePage() {
                       />
                     </Field>
                   </div>
-                  {renderParticipantCheckControls(judge)}
+                  <ParticipantCheckControls
+                    participant={judge}
+                    locale={locale}
+                    status={session.status}
+                    checkState={session.participantChecks[judge.id]}
+                    onCheck={session.runParticipantCheck}
+                  />
                 </div>
               ) : null}
             </div>
@@ -2155,85 +1218,69 @@ export default function HomePage() {
             </div>
           </div>
 
-          {error ? <div className="alert">{error}</div> : null}
+          {session.error ? <div className="alert">{session.error}</div> : null}
 
           <div className="status-strip">
-            <span className="chip">{text(locale, "状态", "Status")}: {statusLabel(status, locale)}</span>
-            <span className="chip">{text(locale, "阶段", "Stage")}: {stageLabel(stage, locale)}</span>
-            <span className="chip">{text(locale, "轮次", "Round")}: {round}</span>
-            <span className="chip">{text(locale, "已运行", "Elapsed")}: {(elapsedMs / 1000).toFixed(0)}s</span>
+            <span className="chip">{text(locale, "状态", "Status")}: {statusLabel(session.status, locale)}</span>
+            <span className="chip">{text(locale, "阶段", "Stage")}: {stageLabel(session.stage, locale)}</span>
+            <span className="chip">{text(locale, "轮次", "Round")}: {session.round}</span>
+            <span className="chip">{text(locale, "已运行", "Elapsed")}: {(session.elapsedMs / 1000).toFixed(0)}s</span>
           </div>
 
           <div className="button-row">
-            <button type="button" className="button button-primary" disabled={status === "running"} onClick={() => void startDiscussion()}>
+            <button type="button" className="button button-primary" disabled={session.status === "running"} onClick={session.startDiscussion}>
               {text(locale, "开始讨论", "Start discussion")}
             </button>
             <button
               type="button"
               className="button button-secondary"
-              disabled={status !== "running"}
-              onClick={() => {
-                setStatus("paused");
-                setLoadingLabel("");
-                setError(text(locale, "已手动暂停。当前内容会保留，你可以稍后继续。", "Paused manually. Your current progress is preserved and you can continue later."));
-                requestAbortRef.current?.abort();
-              }}
+              disabled={session.status !== "running"}
+              onClick={session.pauseDiscussion}
             >
               {text(locale, "暂停", "Pause")}
             </button>
             <button
               type="button"
               className="button button-secondary"
-              disabled={status !== "paused"}
-              onClick={() => {
-                setStatus("running");
-                setRunningSince(Date.now() - elapsedMs);
-              }}
+              disabled={session.status !== "paused"}
+              onClick={session.continueDiscussion}
             >
               {text(locale, "继续", "Continue")}
             </button>
-            {failedAction ? (
+            {session.failedAction ? (
               <button
                 type="button"
                 className="button button-secondary"
-                onClick={() => {
-                  setFailedAction(null);
-                  setStatus("running");
-                }}
+                onClick={session.retryCurrentStep}
               >
                 {text(locale, "重试当前步骤", "Retry current step")}
               </button>
             ) : null}
-            {failedAction ? (
+            {session.failedAction ? (
               <button
                 type="button"
                 className="button button-secondary"
-                onClick={() => {
-                  setFailedAction(null);
-                  setError("");
-                  advanceAfterTurn();
-                  setStatus("running");
-                }}
+                onClick={session.skipCurrentStep}
               >
                 {text(locale, "跳过当前步骤", "Skip this step")}
               </button>
             ) : null}
-            {transcript.length ? (
-              <button type="button" className="button button-secondary" onClick={() => downloadFile("debate.csv", buildCsv(transcript), "text/csv")}>
+            {session.transcript.length ? (
+              <button type="button" className="button button-secondary" onClick={() => downloadFile("debate.csv", buildCsv(session.transcript), "text/csv")}>
                 CSV
               </button>
             ) : null}
-            {transcript.length ? (
+            {session.transcript.length ? (
               <button
                 type="button"
                 className="button button-secondary"
-                onClick={() => downloadFile("debate.txt", transcript.map((turn) => `${turn.speaker}\n${turn.content}`).join("\n\n"), "text/plain")}
+                onClick={() => downloadFile("debate.txt", session.transcript.map((turn) => `${turn.speaker}\n${turn.content}`).join("\n\n"), "text/plain")}
               >
                 TXT
               </button>
             ) : null}
-            {transcript.length ? (
-              <button type="button" className="button button-secondary" onClick={() => downloadFile("debate.json", JSON.stringify(transcript, null, 2), "application/json")}>
+            {session.transcript.length ? (
+              <button type="button" className="button button-secondary" onClick={() => downloadFile("debate.json", JSON.stringify(session.transcript, null, 2), "application/json")}>
                 JSON
               </button>
             ) : null}
@@ -2245,7 +1292,7 @@ export default function HomePage() {
             <div>
               <h2>{text(locale, "讨论过程与结果", "Discussion and result")}</h2>
               <p className="muted">
-                {loadingLabel ||
+                {session.loadingLabel ||
                   text(
                     locale,
                     "这里会展示每轮辩手发言、主持纠偏、动态胜率和最终裁判总结。",
@@ -2259,8 +1306,8 @@ export default function HomePage() {
 
           <div className={`reader-surface reader-${readingTheme}`} style={readerStyle}>
             <div className="readable-copy timeline">
-              {transcript.length ? (
-                transcript.map((turn) => (
+              {session.transcript.length ? (
+                session.transcript.map((turn) => (
                   <article key={turn.id} className="timeline-item">
                     <div className="provider-header">
                       <div>
@@ -2302,7 +1349,7 @@ export default function HomePage() {
                 ))
               ) : (
                 <div className="empty-state">
-                  {text(locale, "还没有讨论记录。先在上半部分完成配置，再点击“开始讨论”。", "No discussion yet. Configure above, then click Start discussion.")}
+                  {text(locale, "还没有讨论记录。先在上半部分完成配置，再点击\u201c开始讨论\u201d。", "No discussion yet. Configure above, then click Start discussion.")}
                 </div>
               )}
             </div>
@@ -2317,9 +1364,9 @@ export default function HomePage() {
                 "If you want to add context, correct facts, or add constraints, pause first and append your note.",
               )}
             </p>
-            <textarea value={draftUserMessage} onChange={(event) => setDraftUserMessage(event.target.value)} />
+            <textarea value={session.draftUserMessage} onChange={(event) => session.setDraftUserMessage(event.target.value)} />
             <div className="mini-actions">
-              <button type="button" className="button button-secondary" onClick={addUserComment}>
+              <button type="button" className="button button-secondary" onClick={session.addUserComment}>
                 {text(locale, "加入讨论记录", "Add to transcript")}
               </button>
             </div>
@@ -2329,4 +1376,3 @@ export default function HomePage() {
     </main>
   );
 }
-
