@@ -158,6 +158,10 @@ button, input, textarea, select { font: inherit; }
 }
 
 .full-field { grid-column: 1 / -1; }
+.stacked-control {
+  display: grid;
+  gap: 12px;
+}
 
 .field input, .field select, .full-field input, .full-field textarea, .interject-box textarea {
   width: 100%;

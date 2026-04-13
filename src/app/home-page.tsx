@@ -11,7 +11,7 @@ import {
   STANDARD_DEBATER_PERSONA_IDS,
   getPersonaPreset,
 } from "@/lib/persona-presets";
-import { describeModelVariant, getModelPresets } from "@/lib/model-presets";
+import { describeModelVariant, getModelDocsUrl, getModelPresets, hasModelPreset } from "@/lib/model-presets";
 import { createParticipant, PROVIDER_CATALOG, stanceLabel } from "@/lib/provider-catalog";
 import type {
   DebateConfig,
@@ -35,6 +35,11 @@ type ProviderConnection = {
 };
 
 type ProviderConnectionMap = Record<ProviderKind, ProviderConnection>;
+type ParticipantCheckState = {
+  status: "idle" | "loading" | "success" | "error";
+  mode: "output" | "search";
+  message: string;
+};
 
 type AppStorage = {
   config?: DebateConfig;
@@ -214,6 +219,63 @@ function Field({
       {hint ? <span className="field-hint">{hint}</span> : null}
       {children}
     </label>
+  );
+}
+
+function ModelVariantField({
+  provider,
+  model,
+  locale,
+  label,
+  onModelChange,
+}: {
+  provider: ProviderKind;
+  model: string;
+  locale: Locale;
+  label: string;
+  onModelChange: (model: string) => void;
+}) {
+  const docsUrl = getModelDocsUrl(provider);
+  const presets = getModelPresets(provider);
+  const selectValue = hasModelPreset(provider, model) ? model : "__custom__";
+  const customLabel = text(locale, "手动填写", "Custom");
+
+  return (
+    <Field
+      label={label}
+      hint={describeModelVariant(provider, model, locale)}
+      full
+    >
+      <div className="stacked-control">
+        <select
+          aria-label={label}
+          value={selectValue}
+          onChange={(event) => {
+            if (event.target.value !== "__custom__") {
+              onModelChange(event.target.value);
+            }
+          }}
+        >
+          {presets.map((preset) => (
+            <option key={preset.value} value={preset.value}>
+              {preset.label}
+            </option>
+          ))}
+          <option value="__custom__">{customLabel}</option>
+        </select>
+        <input
+          aria-label={`${label} ${text(locale, "自定义", "custom")}`}
+          value={model}
+          placeholder={PROVIDER_CATALOG[provider].defaultModel}
+          onChange={(event) => onModelChange(event.target.value)}
+        />
+        <div className="compact-note">
+          <a href={docsUrl} target="_blank" rel="noreferrer">
+            {text(locale, "查看该厂商官方模型名称", "Check this provider's official model names")}
+          </a>
+        </div>
+      </div>
+    </Field>
   );
 }
 
@@ -527,6 +589,7 @@ export default function HomePage() {
   const [runningSince, setRunningSince] = useState<number | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
+  const [participantChecks, setParticipantChecks] = useState<Record<string, ParticipantCheckState>>({});
 
   const [readingTheme, setReadingTheme] = useState<ReadingTheme>("soft-dark");
   const [fontSize, setFontSize] = useState(18);
@@ -617,9 +680,11 @@ export default function HomePage() {
     return () => window.clearInterval(timer);
   }, [status, runningSince, elapsedMs]);
 
-  async function apiPost(payload: unknown) {
+  async function apiPost(payload: unknown, trackAbort = true) {
     const controller = new AbortController();
-    requestAbortRef.current = controller;
+    if (trackAbort) {
+      requestAbortRef.current = controller;
+    }
 
     try {
       const response = await fetch("/api/debate", {
@@ -655,7 +720,9 @@ export default function HomePage() {
           : text(locale, "网络请求失败，请稍后重试。", "Network request failed. Please try again."),
       );
     } finally {
-      requestAbortRef.current = null;
+      if (trackAbort) {
+        requestAbortRef.current = null;
+      }
     }
   }
 
@@ -840,6 +907,138 @@ export default function HomePage() {
       setLoadingLabel("");
       setError(cause instanceof Error ? cause.message : text(locale, "准备失败，请检查配置后重试。", "Preparation failed. Please review settings and retry."));
     }
+  }
+
+  async function runParticipantCheck(participantId: string, mode: "output" | "search") {
+    const constrainedConfig = applyConfigConstraints(activeConfig, locale);
+    const config = resolveConfigForRun(
+      {
+        ...constrainedConfig,
+        topic: constrainedConfig.topic.trim() || text(locale, "请用一句话说明今天的 AI 模型动态。", "Give one short update about current AI model news."),
+      },
+      providerConnections,
+    );
+    const participant = config.participants.find((item) => item.id === participantId);
+
+    if (!participant) {
+      setParticipantChecks((current) => ({
+        ...current,
+        [participantId]: {
+          status: "error",
+          mode,
+          message: text(locale, "没有找到这个角色。", "This role could not be found."),
+        },
+      }));
+      return;
+    }
+
+    if (!participant.apiKey.trim()) {
+      setParticipantChecks((current) => ({
+        ...current,
+        [participantId]: {
+          status: "error",
+          mode,
+          message: text(
+            locale,
+            `请先在上方填写 ${PROVIDER_CATALOG[participant.provider].label[locale]} 的 API Key。`,
+            `Please fill in the ${PROVIDER_CATALOG[participant.provider].label[locale]} API key above first.`,
+          ),
+        },
+      }));
+      return;
+    }
+
+    setParticipantChecks((current) => ({
+      ...current,
+      [participantId]: {
+        status: "loading",
+        mode,
+        message:
+          mode === "search"
+            ? text(locale, "正在测试联网输出…", "Testing live web output...")
+            : text(locale, "正在测试基础输出…", "Testing basic output..."),
+      },
+    }));
+
+    try {
+      const result = (await apiPost(
+        {
+          action: "check",
+          config,
+          participantId,
+          mode,
+        },
+        false,
+      )) as {
+        ok: boolean;
+        mode: "output" | "search";
+        text: string;
+        searchProvider?: string;
+        citations?: Array<{ url: string }>;
+      };
+
+      const citationCount = result.citations?.length ?? 0;
+      const successMessage =
+        mode === "search"
+          ? text(
+              locale,
+              `联网测试通过。${result.searchProvider === "native" ? "已走模型原生联网。" : "已走外部搜索增强。"}${citationCount ? ` 发现 ${citationCount} 条来源。` : ""}`,
+              `Web test passed. ${result.searchProvider === "native" ? "Native provider search was used." : "External search augmentation was used."}${citationCount ? ` ${citationCount} source link(s) found.` : ""}`,
+            )
+          : text(locale, "基础输出测试通过。", "Basic output test passed.");
+
+      setParticipantChecks((current) => ({
+        ...current,
+        [participantId]: {
+          status: "success",
+          mode,
+          message: `${successMessage} ${result.text}`.trim(),
+        },
+      }));
+    } catch (cause) {
+      setParticipantChecks((current) => ({
+        ...current,
+        [participantId]: {
+          status: "error",
+          mode,
+          message:
+            cause instanceof Error
+              ? cause.message
+              : text(locale, "测试失败，请检查 API 配置后再试。", "Test failed. Please check the API configuration and try again."),
+        },
+      }));
+    }
+  }
+
+  function renderParticipantCheckControls(participant: ParticipantConfig) {
+    const checkState = participantChecks[participant.id];
+    const isLoading = checkState?.status === "loading";
+
+    return (
+      <div className="mini-actions">
+        <button
+          type="button"
+          className="button button-secondary"
+          disabled={status === "running" || isLoading}
+          onClick={() => void runParticipantCheck(participant.id, "output")}
+        >
+          {text(locale, "测试输出", "Test output")}
+        </button>
+        <button
+          type="button"
+          className="button button-secondary"
+          disabled={status === "running" || isLoading}
+          onClick={() => void runParticipantCheck(participant.id, "search")}
+        >
+          {text(locale, "测试联网", "Test web search")}
+        </button>
+        {checkState ? (
+          <p className={checkState.status === "error" ? "score-note" : "search-note"}>
+            {checkState.message}
+          </p>
+        ) : null}
+      </div>
+    );
   }
 
   function addUserComment() {
@@ -1286,21 +1485,13 @@ export default function HomePage() {
                     </select>
                   </Field>
 
-                  <Field
+                  <ModelVariantField
+                    provider={activeConfig.participants[0]?.provider ?? "openai"}
+                    model={activeConfig.participants[0]?.model ?? ""}
+                    locale={locale}
                     label={text(locale, "模型变体", "Model variant")}
-                    hint={describeModelVariant(activeConfig.participants[0]?.provider ?? "openai", activeConfig.participants[0]?.model ?? "", locale)}
-                  >
-                    <select
-                      value={activeConfig.participants[0]?.model ?? ""}
-                      onChange={(event) => updateSingleShared((item) => ({ ...item, model: event.target.value }))}
-                    >
-                      {getModelPresets(activeConfig.participants[0]?.provider ?? "openai").map((preset) => (
-                        <option key={preset.value} value={preset.value}>
-                          {preset.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
+                    onModelChange={(model) => updateSingleShared((item) => ({ ...item, model }))}
+                  />
 
                   <Field
                     label={text(locale, "连接方式", "Connection source")}
@@ -1464,6 +1655,7 @@ export default function HomePage() {
                           </Field>
                         ) : null}
                       </div>
+                      {renderParticipantCheckControls(role)}
                     </div>
                   );
                 })}
@@ -1522,21 +1714,13 @@ export default function HomePage() {
                         </select>
                       </Field>
 
-                      <Field
+                      <ModelVariantField
+                        provider={role.provider}
+                        model={role.model}
+                        locale={locale}
                         label={text(locale, "模型变体", "Model variant")}
-                        hint={describeModelVariant(role.provider, role.model, locale)}
-                      >
-                        <select
-                          value={role.model}
-                          onChange={(event) => updateParticipant(role.id, (item) => ({ ...item, model: event.target.value }))}
-                        >
-                          {getModelPresets(role.provider).map((preset) => (
-                            <option key={preset.value} value={preset.value}>
-                              {preset.label}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
+                        onModelChange={(model) => updateParticipant(role.id, (item) => ({ ...item, model }))}
+                      />
 
                       <Field
                         label={text(locale, "连接方式", "Connection source")}
@@ -1644,6 +1828,7 @@ export default function HomePage() {
                         {text(locale, "移除这个辩手", "Remove this debater")}
                       </button>
                     </div>
+                    {renderParticipantCheckControls(role)}
                   </div>
                 );
               })}
@@ -1686,21 +1871,13 @@ export default function HomePage() {
                       </select>
                     </Field>
 
-                    <Field
+                    <ModelVariantField
+                      provider={judge.provider}
+                      model={judge.model}
+                      locale={locale}
                       label={text(locale, "裁判模型变体", "Judge model variant")}
-                      hint={describeModelVariant(judge.provider, judge.model, locale)}
-                    >
-                      <select
-                        value={judge.model}
-                        onChange={(event) => updateParticipant(judge.id, (item) => ({ ...item, model: event.target.value, stance: "neutral" }))}
-                      >
-                        {getModelPresets(judge.provider).map((preset) => (
-                          <option key={preset.value} value={preset.value}>
-                            {preset.label}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
+                      onModelChange={(model) => updateParticipant(judge.id, (item) => ({ ...item, model, stance: "neutral" }))}
+                    />
 
                     <Field
                       label={text(locale, "连接方式", "Connection source")}
@@ -1775,6 +1952,7 @@ export default function HomePage() {
                       />
                     </Field>
                   </div>
+                  {renderParticipantCheckControls(judge)}
                 </div>
               ) : null}
             </div>

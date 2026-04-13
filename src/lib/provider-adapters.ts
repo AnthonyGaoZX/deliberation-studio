@@ -84,9 +84,13 @@ function stringifyError(error: unknown) {
 
 function sanitizeProviderErrorDetail(detail: string) {
   return detail
+    .replace(/You can get your API key at\s*https?:\/\/\S+/gi, "")
+    .replace(/You can get your API key at\b/gi, "")
     .replace(/\(provided key:[^)]+\)/gi, "")
     .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\bat\s*$/gi, "")
     .replace(/\s{2,}/g, " ")
+    .replace(/\s+\./g, ".")
     .trim();
 }
 

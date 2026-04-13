@@ -27,8 +27,8 @@ describe("HomePage UI behavior", () => {
     render(<HomePage />);
 
     const buttons = screen.getAllByRole("button") as HTMLButtonElement[];
-    const expansiveButton = buttons.find((button) => /自由发挥|Expansive/i.test(button.textContent ?? ""));
-    const conciseButton = buttons.find((button) => /精简|Concise/i.test(button.textContent ?? ""));
+    const expansiveButton = buttons.find((button) => /Expansive|自由发挥/i.test(button.textContent ?? ""));
+    const conciseButton = buttons.find((button) => /Concise|精简/i.test(button.textContent ?? ""));
 
     expect(expansiveButton).toBeTruthy();
     expect(conciseButton).toBeTruthy();
@@ -76,7 +76,21 @@ describe("HomePage UI behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: /使用 DeepSeek|Use DeepSeek/i }));
 
     expect(screen.getAllByLabelText(/API Key/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/No duplicate key entry is needed|无需在这里重复填写连接信息/)).toBeTruthy();
+    expect(screen.getByText(/无需在这里重复填写连接信息|No need to repeat connection fields here/i)).toBeTruthy();
+  });
+
+  it("lets users manually type a model variant and see per-role test controls", () => {
+    render(<HomePage />);
+
+    fireEvent.click(screen.getByRole("button", { name: /使用 Gemini \/ Google|Use Gemini/i }));
+
+    const customModelInput = screen.getByLabelText(/模型变体 自定义|Model variant custom/i) as HTMLInputElement;
+    fireEvent.change(customModelInput, { target: { value: "gemini-2.5-flash" } });
+
+    expect(customModelInput.value).toBe("gemini-2.5-flash");
+    expect(screen.getAllByRole("button", { name: /测试输出|Test output/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /测试联网|Test web search/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /官方模型名称|official model names/i }).length).toBeGreaterThan(0);
   });
 
   it("reveals custom persona input and multi-model judge provider settings", () => {
@@ -91,6 +105,6 @@ describe("HomePage UI behavior", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /多模型|Multi-model/i }));
     expect(screen.getByLabelText(/裁判模型厂商|Judge provider/i)).toBeTruthy();
-    expect(screen.getByLabelText(/裁判模型变体|Judge model variant/i)).toBeTruthy();
+    expect(screen.getAllByLabelText(/裁判模型变体|Judge model variant/i).length).toBeGreaterThan(0);
   });
 });

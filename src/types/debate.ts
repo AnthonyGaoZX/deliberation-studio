@@ -81,6 +81,7 @@ export type ProviderMeta = {
   apiKeyHelp: Record<Locale, string>;
   officialUrl: string;
   apiConsoleUrl: string;
+  modelDocsUrl: string;
   defaultBaseUrl: string;
   defaultModel: string;
   supportsNativeSearch: boolean;

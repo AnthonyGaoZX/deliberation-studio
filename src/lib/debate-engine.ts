@@ -201,6 +201,12 @@ const summarizeRequestSchema = z.object({
   rollingSummary: z.string().optional(),
 });
 
+const participantCheckRequestSchema = z.object({
+  config: debateConfigSchema,
+  participantId: z.string().min(1),
+  mode: z.enum(["output", "search"]),
+});
+
 const COMMON_RULES = [
   "Use real information. If uncertain, state uncertainty clearly.",
   "Keep the debate structured and evidence-oriented.",
@@ -602,6 +608,49 @@ function mergeSearchEvidence(base: SearchEvidence | null, supplement: SearchEvid
   };
 }
 
+function buildParticipantCheckMessages(
+  config: DebateConfig,
+  participant: ParticipantConfig,
+  mode: "output" | "search",
+  searchEvidence?: SearchEvidence | null,
+): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+  const systemPrompt =
+    mode === "search"
+      ? [
+          `You are ${participant.label}.`,
+          `Role: ${participant.roleName}.`,
+          outputLanguageInstruction(config.outputLanguage),
+          responseLengthInstruction("concise"),
+          "This is a connection test. Reply with a short, readable answer only.",
+          searchEvidence?.failed
+            ? "Live web search was unavailable during this check. Be honest about that."
+            : searchEvidence
+              ? `Use this fresh web evidence in your short answer:\n${searchEvidence.contextBlock}`
+              : "If your provider supports native web search, use it now.",
+        ]
+      : [
+          `You are ${participant.label}.`,
+          `Role: ${participant.roleName}.`,
+          outputLanguageInstruction(config.outputLanguage),
+          responseLengthInstruction("concise"),
+          "This is a simple output test. Reply with one short paragraph to confirm the model connection works.",
+        ];
+
+  const userPrompt =
+    mode === "search"
+      ? config.outputLanguage === "zh"
+        ? "请用一小段自然语言说明当前联网检索是否正常，并给出一个简短事实点。"
+        : "In one short paragraph, confirm whether live web retrieval worked and mention one brief factual finding."
+      : config.outputLanguage === "zh"
+        ? "请用一小段自然语言说明当前模型输出是否正常。"
+        : "In one short paragraph, confirm that normal text generation works.";
+
+  return [
+    { role: "system", content: systemPrompt.filter(Boolean).join("\n\n") },
+    { role: "user", content: userPrompt },
+  ];
+}
+
 async function resolveSearchEvidence(
   config: DebateConfig,
   participant: ParticipantConfig,
@@ -850,6 +899,78 @@ export async function summarizeDebate(raw: unknown) {
 
   return {
     summary: sanitizeModelText(result.text),
+  };
+}
+
+export async function testParticipant(raw: unknown) {
+  const input = participantCheckRequestSchema.parse(raw);
+  validateConfig(input.config);
+  const participant = getParticipant(input.config, input.participantId);
+
+  if (input.mode === "output") {
+    const result = await callProvider(
+      participant,
+      buildParticipantCheckMessages(input.config, participant, "output"),
+      false,
+      false,
+      "concise",
+    );
+
+    return {
+      ok: true,
+      mode: "output",
+      provider: participant.provider,
+      text: sanitizeModelText(result.text),
+      citations: result.citations,
+    };
+  }
+
+  const supportsNativeSearch = providerCanUseNativeSearch(participant);
+  const query = input.config.topic.trim();
+
+  if (supportsNativeSearch) {
+    const result = await callProvider(
+      participant,
+      buildParticipantCheckMessages(input.config, participant, "search"),
+      true,
+      false,
+      "concise",
+    );
+
+    return {
+      ok: true,
+      mode: "search",
+      provider: participant.provider,
+      searchProvider: "native",
+      text: sanitizeModelText(result.text),
+      citations: result.citations,
+    };
+  }
+
+  const searchEvidence = await performSearch(query, input.config.search.tavilyApiKey, query);
+  if (searchEvidence.failed) {
+    throw new Error(
+      input.config.locale === "zh"
+        ? `${participant.label} 联网测试失败：外部搜索暂时不可用，请稍后重试，或填写可用的 Tavily Key。`
+        : `${participant.label} web-search test failed: external search is unavailable right now. Please retry later or add a working Tavily key.`,
+    );
+  }
+
+  const result = await callProvider(
+    participant,
+    buildParticipantCheckMessages(input.config, participant, "search", searchEvidence),
+    false,
+    false,
+    "concise",
+  );
+
+  return {
+    ok: true,
+    mode: "search",
+    provider: participant.provider,
+    searchProvider: searchEvidence.provider ?? "none",
+    text: sanitizeModelText(result.text),
+    citations: result.citations.length ? result.citations : searchEvidence.citations,
   };
 }
 

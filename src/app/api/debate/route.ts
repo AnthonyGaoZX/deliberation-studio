@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { generateTurn, prepareDebate, summarizeDebate } from "@/lib/debate-engine";
+import { generateTurn, prepareDebate, summarizeDebate, testParticipant } from "@/lib/debate-engine";
 
 export async function POST(request: Request) {
   try {
@@ -16,6 +16,10 @@ export async function POST(request: Request) {
 
     if (body?.action === "summarize") {
       return NextResponse.json(await summarizeDebate(body));
+    }
+
+    if (body?.action === "check") {
+      return NextResponse.json(await testParticipant(body));
     }
 
     return NextResponse.json({ error: "Unsupported API action." }, { status: 400 });
