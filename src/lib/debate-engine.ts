@@ -665,6 +665,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
       ],
       false,
       false,
+      input.config.responseLength,
     );
 
     const parsed = parseStructuredTurnText(result.text);
@@ -712,6 +713,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
       ],
       Boolean(nativeSearchForScore),
       false,
+      input.config.responseLength,
     );
 
     const evaluation = normalizeEvaluation(result.text, input.config.stopThreshold);
@@ -752,6 +754,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
       ],
       false,
       false,
+      input.config.responseLength,
     );
 
     const report = normalizeFinalReport(result.text, input.config.outputLanguage);
@@ -794,6 +797,7 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
     ],
     nativeSearch,
     false,
+    input.config.responseLength,
   );
 
   return {
@@ -841,6 +845,7 @@ export async function summarizeDebate(raw: unknown) {
     ],
     false,
     false,
+    input.config.responseLength,
   );
 
   return {

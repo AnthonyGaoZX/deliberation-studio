@@ -220,6 +220,79 @@ describe("provider adapters", () => {
     expect(result.citations[0]?.domain).toBe("example.com");
   });
 
+  it("adds Gemini max output token budget to reduce truncation", async () => {
+    const geminiParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "gemini",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      model: "gemini-3.1-flash-lite",
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        candidates: [{ content: { parts: [{ text: "ok" }] } }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await callProvider(geminiParticipant, [{ role: "user", content: "test" }], true);
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const payload = JSON.parse(String(init.body)) as { generationConfig?: { maxOutputTokens?: number } };
+    expect(payload.generationConfig?.maxOutputTokens).toBe(2200);
+  });
+
+  it("removes Gemini token budget protection in expansive mode", async () => {
+    const geminiParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "gemini",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      model: "gemini-3.1-flash-lite",
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        candidates: [{ content: { parts: [{ text: "ok" }] } }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await callProvider(geminiParticipant, [{ role: "user", content: "test" }], true, false, "expansive");
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const payload = JSON.parse(String(init.body)) as { generationConfig?: { maxOutputTokens?: number } };
+    expect(payload.generationConfig?.maxOutputTokens).toBeUndefined();
+  });
+
+  it("returns a readable fallback when Gemini only returns citations", async () => {
+    const geminiParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "gemini",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      model: "gemini-3.1-flash-lite",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          candidates: [
+            {
+              content: { parts: [] },
+              groundingMetadata: {
+                groundingChunks: [{ web: { title: "Example", uri: "https://example.com/page" } }],
+              },
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await callProvider(geminiParticipant, [{ role: "user", content: "test" }], true);
+    expect(result.text).toContain("source links");
+    expect(result.citations[0]?.url).toBe("https://example.com/page");
+  });
+
   it("sanitizes Gemini api keys and base urls before sending headers", async () => {
     const geminiParticipant: ParticipantConfig = {
       ...participant,
@@ -268,6 +341,29 @@ describe("provider adapters", () => {
     expect(secondPayload.response_format?.type).toBe("json_object");
   });
 
+  it("removes chat-completion token budget protection in expansive mode", async () => {
+    const deepseekParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-chat",
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: { content: "plain text output" } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await callProvider(deepseekParticipant, [{ role: "user", content: "debate naturally" }], false, false, "expansive");
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const payload = JSON.parse(String(init.body)) as {
+      max_tokens?: number;
+      max_completion_tokens?: number;
+    };
+
+    expect(payload.max_tokens).toBeUndefined();
+    expect(payload.max_completion_tokens).toBeUndefined();
+  });
+
   it("surfaces DeepSeek HTTP errors as readable provider errors", async () => {
     const deepseekParticipant: ParticipantConfig = {
       ...participant,
@@ -284,6 +380,36 @@ describe("provider adapters", () => {
 
     await expect(callProvider(deepseekParticipant, [{ role: "user", content: "test" }], false)).rejects.toThrow(
       /DeepSeek 1 request failed: Invalid API key/,
+    );
+  });
+
+  it("removes relay urls and echoed key fragments from credential errors", async () => {
+    const geminiParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "gemini",
+      label: "Gemini / Google 4",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      model: "gemini-3.1-flash-lite",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          {
+            error: {
+              message:
+                "Incorrect API key provided. You can get your API key at https://www.ohmygpt.com/apis/keys (provided key: Flash-***8336)",
+            },
+          },
+          false,
+          401,
+        ),
+      ),
+    );
+
+    await expect(callProvider(geminiParticipant, [{ role: "user", content: "test" }], false)).rejects.toThrow(
+      /Gemini \/ Google 4 request failed: Incorrect API key provided\./,
     );
   });
 

@@ -136,4 +136,23 @@ describe("debate engine search behavior", () => {
     const messages = callProviderMock.mock.calls[0]?.[1] as Array<{ role: string; content: string }>;
     expect(messages[0]?.content).toContain("Shared evidence block");
   });
+
+  it("forwards expansive response length to the provider layer", async () => {
+    const config = buildConfig({
+      responseLength: "expansive",
+    });
+
+    await generateTurn({
+      config,
+      participantId: "p1",
+      phase: "opening",
+      round: 1,
+      transcript: [],
+      rollingSummary: "",
+      sharedSearch,
+    });
+
+    expect(callProviderMock).toHaveBeenCalledTimes(1);
+    expect(callProviderMock.mock.calls[0]?.[4]).toBe("expansive");
+  });
 });

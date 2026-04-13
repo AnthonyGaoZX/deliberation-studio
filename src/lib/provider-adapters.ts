@@ -1,6 +1,6 @@
 import { dedupeCitations, extractDomain, sanitizeModelText } from "@/lib/citations";
 import { PROVIDER_CATALOG } from "@/lib/provider-catalog";
-import type { Citation, ParticipantConfig, ProviderKind } from "@/types/debate";
+import type { Citation, ParticipantConfig, ProviderKind, ResponseLengthMode } from "@/types/debate";
 
 type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -13,6 +13,10 @@ export type ProviderResult = {
 };
 
 const REQUEST_TIMEOUT_MS = 45_000;
+const TOKEN_BUDGETS: Record<Exclude<ResponseLengthMode, "expansive">, { responses: number; chat: number }> = {
+  concise: { responses: 900, chat: 700 },
+  balanced: { responses: 2200, chat: 1400 },
+};
 
 const OFFICIAL_HOSTS: Partial<Record<ProviderKind, string>> = {
   openai: "api.openai.com",
@@ -73,6 +77,14 @@ function stringifyError(error: unknown) {
   return "Unknown request error";
 }
 
+function sanitizeProviderErrorDetail(detail: string) {
+  return detail
+    .replace(/\(provided key:[^)]+\)/gi, "")
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function usesGatewayBaseUrl(participant: ParticipantConfig) {
   const officialHost = OFFICIAL_HOSTS[participant.provider];
   if (!officialHost) return false;
@@ -80,20 +92,21 @@ function usesGatewayBaseUrl(participant: ParticipantConfig) {
 }
 
 function appendRelayHint(participant: ParticipantConfig, detail: string) {
-  const normalized = detail.toLowerCase();
+  const sanitized = sanitizeProviderErrorDetail(detail);
+  const normalized = sanitized.toLowerCase();
   const looksLikeCredentialProblem =
     normalized.includes("api key") ||
     normalized.includes("x-api-key") ||
     normalized.includes("credential") ||
     normalized.includes("unauthorized");
 
-  if (!looksLikeCredentialProblem) return detail;
+  if (!looksLikeCredentialProblem) return sanitized;
 
   if (["openai", "anthropic", "gemini"].includes(participant.provider) && !usesGatewayBaseUrl(participant)) {
-    return `${detail} If this key comes from a relay or reseller such as OhMyGPT, also fill the provider Base URL instead of using the official default endpoint.`;
+    return `${sanitized} If this key comes from a relay or reseller, also fill the provider Base URL instead of using the official default endpoint.`;
   }
 
-  return detail;
+  return sanitized;
 }
 
 function makeProviderError(participant: ParticipantConfig, detail: string) {
@@ -231,6 +244,14 @@ function uniqueText(lines: string[]) {
   return lines.filter((line, index, array) => array.findIndex((candidate) => candidate === line) === index).join("\n");
 }
 
+function getResponsesTokenBudget(responseLength: ResponseLengthMode) {
+  return responseLength === "expansive" ? undefined : TOKEN_BUDGETS[responseLength].responses;
+}
+
+function getChatTokenBudget(responseLength: ResponseLengthMode) {
+  return responseLength === "expansive" ? undefined : TOKEN_BUDGETS[responseLength].chat;
+}
+
 function extractChatMessageText(content: unknown): string {
   if (typeof content === "string") {
     return content.trim();
@@ -284,7 +305,9 @@ async function callResponsesApi(
   participant: ParticipantConfig,
   messages: ChatMessage[],
   tools: unknown[] | undefined,
+  responseLength: ResponseLengthMode,
 ) {
+  const maxOutputTokens = getResponsesTokenBudget(responseLength);
   const response = await fetchWithTimeout(
     buildEndpoint(participant.baseUrl, "responses"),
     {
@@ -301,6 +324,7 @@ async function callResponsesApi(
         })),
         tools,
         include: tools?.length ? ["web_search_call.action.sources"] : undefined,
+        max_output_tokens: maxOutputTokens,
       }),
     },
     participant,
@@ -346,7 +370,18 @@ async function callResponsesApi(
 
   const text = extractResponsesReadableText(data);
   if (!text.trim()) {
-    throw makeProviderError(participant, "The API returned successfully but no readable text was found.");
+    const fallbackText = [...citationsFromContent, ...citationsFromTopLevel].length
+      ? "The model returned source links for this round, but it did not finish a readable written answer. Please retry or shorten the output length."
+      : "";
+
+    if (!fallbackText) {
+      throw makeProviderError(participant, "The API returned successfully but no readable text was found.");
+    }
+
+    return {
+      text: fallbackText,
+      citations: dedupeCitations([...citationsFromContent, ...citationsFromTopLevel]),
+    } satisfies ProviderResult;
   }
 
   return {
@@ -355,8 +390,14 @@ async function callResponsesApi(
   } satisfies ProviderResult;
 }
 
-async function callAnthropic(participant: ParticipantConfig, messages: ChatMessage[], enableSearch: boolean) {
+async function callAnthropic(
+  participant: ParticipantConfig,
+  messages: ChatMessage[],
+  enableSearch: boolean,
+  responseLength: ResponseLengthMode,
+) {
   const system = messages.find((message) => message.role === "system")?.content ?? "";
+  const maxTokens = getChatTokenBudget(responseLength);
   const response = await fetchWithTimeout(
     buildEndpoint(participant.baseUrl, "v1/messages"),
     {
@@ -368,7 +409,7 @@ async function callAnthropic(participant: ParticipantConfig, messages: ChatMessa
       },
       body: JSON.stringify({
         model: participant.model,
-        max_tokens: 1400,
+        max_tokens: maxTokens,
         system,
         messages: messages
           .filter((message) => message.role !== "system")
@@ -410,12 +451,18 @@ async function callAnthropic(participant: ParticipantConfig, messages: ChatMessa
   } satisfies ProviderResult;
 }
 
-async function callGemini(participant: ParticipantConfig, messages: ChatMessage[], enableSearch: boolean) {
+async function callGemini(
+  participant: ParticipantConfig,
+  messages: ChatMessage[],
+  enableSearch: boolean,
+  responseLength: ResponseLengthMode,
+) {
   const system = messages.find((message) => message.role === "system")?.content ?? "";
   const userPayload = messages
     .filter((message) => message.role !== "system")
     .map((message) => `${message.role.toUpperCase()}:\n${message.content}`)
     .join("\n\n");
+  const maxOutputTokens = getResponsesTokenBudget(responseLength);
 
   const response = await fetchWithTimeout(
     buildEndpoint(participant.baseUrl, `models/${participant.model}:generateContent`),
@@ -431,6 +478,10 @@ async function callGemini(participant: ParticipantConfig, messages: ChatMessage[
         },
         contents: [{ role: "user", parts: [{ text: userPayload }] }],
         tools: enableSearch ? [{ google_search: {} }] : undefined,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens,
+        },
       }),
     },
     participant,
@@ -449,11 +500,6 @@ async function callGemini(participant: ParticipantConfig, messages: ChatMessage[
 
   const candidate = data.candidates?.[0];
   const text = (candidate?.content?.parts ?? []).map((part) => part.text?.trim() || "").filter(Boolean).join("\n");
-
-  if (!text.trim()) {
-    throw makeProviderError(participant, "The API returned successfully but no readable text was found.");
-  }
-
   const citations = dedupeCitations(
     (candidate?.groundingMetadata?.groundingChunks ?? []).flatMap((chunk) =>
       chunk.web?.uri
@@ -468,18 +514,36 @@ async function callGemini(participant: ParticipantConfig, messages: ChatMessage[
     ),
   );
 
+  if (!text.trim()) {
+    if (!citations.length) {
+      throw makeProviderError(participant, "The API returned successfully but no readable text was found.");
+    }
+
+    return {
+      text: "The model returned source links for this round, but it did not finish a readable written answer. Please retry or shorten the output length.",
+      citations,
+    } satisfies ProviderResult;
+  }
+
   return {
     text: sanitizeModelText(text),
     citations,
   } satisfies ProviderResult;
 }
 
-async function callChatCompletion(participant: ParticipantConfig, messages: ChatMessage[], jsonMode: boolean) {
+async function callChatCompletion(
+  participant: ParticipantConfig,
+  messages: ChatMessage[],
+  jsonMode: boolean,
+  responseLength: ResponseLengthMode,
+) {
   const supportsJson = PROVIDER_CATALOG[participant.provider].supportsJsonMode;
-  const tokenBudgetField =
-    participant.provider === "openai"
-      ? { max_completion_tokens: 1400 }
-      : { max_tokens: 1400 };
+  const maxTokens = getChatTokenBudget(responseLength);
+  const tokenBudgetField = maxTokens
+    ? participant.provider === "openai"
+      ? { max_completion_tokens: maxTokens }
+      : { max_tokens: maxTokens }
+    : {};
   const response = await fetchWithTimeout(
     buildEndpoint(participant.baseUrl, "chat/completions"),
     {
@@ -524,23 +588,28 @@ export async function callProvider(
   messages: ChatMessage[],
   nativeSearch: boolean,
   jsonMode = false,
+  responseLength: ResponseLengthMode = "balanced",
 ): Promise<ProviderResult> {
   const gateway = usesGatewayBaseUrl(participant);
 
   switch (participant.provider) {
     case "openai":
       return gateway
-        ? callChatCompletion(participant, messages, jsonMode)
-        : callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined);
+        ? callChatCompletion(participant, messages, jsonMode, responseLength)
+        : callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined, responseLength);
     case "xai":
-      return callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined);
+      return callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined, responseLength);
     case "anthropic":
-      return gateway ? callChatCompletion(participant, messages, jsonMode) : callAnthropic(participant, messages, nativeSearch);
+      return gateway
+        ? callChatCompletion(participant, messages, jsonMode, responseLength)
+        : callAnthropic(participant, messages, nativeSearch, responseLength);
     case "gemini":
-      return gateway ? callChatCompletion(participant, messages, jsonMode) : callGemini(participant, messages, nativeSearch);
+      return gateway
+        ? callChatCompletion(participant, messages, jsonMode, responseLength)
+        : callGemini(participant, messages, nativeSearch, responseLength);
     case "deepseek":
     case "custom":
-      return callChatCompletion(participant, messages, jsonMode);
+      return callChatCompletion(participant, messages, jsonMode, responseLength);
     default:
       throw makeProviderError(participant, "Unsupported provider.");
   }
