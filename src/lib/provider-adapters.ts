@@ -130,10 +130,6 @@ export function providerCanUseNativeSearch(participant: ParticipantConfig) {
     return false;
   }
 
-  if (usesGatewayBaseUrl(participant) && ["openai", "anthropic", "gemini"].includes(participant.provider)) {
-    return false;
-  }
-
   return true;
 }
 
@@ -662,23 +658,15 @@ export async function callProvider(
   jsonMode = false,
   responseLength: ResponseLengthMode = "balanced",
 ): Promise<ProviderResult> {
-  const gateway = usesGatewayBaseUrl(participant);
-
   switch (participant.provider) {
     case "openai":
-      return gateway
-        ? callChatCompletion(participant, messages, jsonMode, responseLength)
-        : callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined, responseLength);
+      return callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined, responseLength);
     case "xai":
       return callResponsesApi(participant, messages, nativeSearch ? [{ type: "web_search" }] : undefined, responseLength);
     case "anthropic":
-      return gateway
-        ? callChatCompletion(participant, messages, jsonMode, responseLength)
-        : callAnthropic(participant, messages, nativeSearch, responseLength);
+      return callAnthropic(participant, messages, nativeSearch, responseLength);
     case "gemini":
-      return gateway
-        ? callChatCompletion(participant, messages, jsonMode, responseLength)
-        : callGemini(participant, messages, nativeSearch, responseLength);
+      return callGemini(participant, messages, nativeSearch, responseLength);
     case "deepseek":
     case "custom":
       return callChatCompletion(participant, messages, jsonMode, responseLength);

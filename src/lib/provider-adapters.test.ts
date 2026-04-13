@@ -165,7 +165,7 @@ describe("provider adapters", () => {
     expect(result.text).toContain("Reason");
   });
 
-  it("routes Anthropic gateway requests through OpenAI-compatible chat completions", async () => {
+  it("sends Anthropic queries to the correct custom endpoint even through custom gateways", async () => {
     const gatewayParticipant: ParticipantConfig = {
       ...participant,
       provider: "anthropic",
@@ -173,7 +173,11 @@ describe("provider adapters", () => {
       model: "claude-4.5-haiku",
     };
 
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ choices: [{ message: { content: "Gateway reply" } }] }));
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        content: [{ type: "text", text: "Native proxy reply" }],
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await callProvider(gatewayParticipant, [{ role: "user", content: "hello" }], true);
@@ -182,9 +186,9 @@ describe("provider adapters", () => {
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     const payload = JSON.parse(String(init.body)) as { messages?: Array<{ role: string; content: string }> };
 
-    expect(calledUrl).toContain("/chat/completions");
+    expect(calledUrl).toContain("/v1/messages");
     expect(payload.messages?.[0]?.content).toBe("hello");
-    expect(result.text).toBe("Gateway reply");
+    expect(result.text).toBe("Native proxy reply");
   });
 
   it("sends native web_search tool for xAI when enabled", async () => {
@@ -485,7 +489,7 @@ describe("provider adapters", () => {
     );
   });
 
-  it("disables native search when OpenAI-family providers use a relay base url", () => {
+  it("allows native search when openAI-family providers use a relay base url", () => {
     const gatewayOpenAi: ParticipantConfig = {
       ...participant,
       provider: "openai",
@@ -504,9 +508,9 @@ describe("provider adapters", () => {
       baseUrl: "https://api.custom-relay.com/v1",
     };
 
-    expect(providerCanUseNativeSearch(gatewayOpenAi)).toBe(false);
-    expect(providerCanUseNativeSearch(gatewayAnthropic)).toBe(false);
-    expect(providerCanUseNativeSearch(gatewayGemini)).toBe(false);
+    expect(providerCanUseNativeSearch(gatewayOpenAi)).toBe(true);
+    expect(providerCanUseNativeSearch(gatewayAnthropic)).toBe(true);
+    expect(providerCanUseNativeSearch(gatewayGemini)).toBe(true);
 
     const officialGrok: ParticipantConfig = {
       ...participant,

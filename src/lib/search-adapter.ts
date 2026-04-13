@@ -175,7 +175,7 @@ function decodeDuckRedirect(url: string) {
 }
 
 async function searchWithDuckDuckGoHtml(query: string): Promise<SearchEvidence> {
-  const response = await fetchWithTimeout("https://html.duckduckgo.com/html/", {
+  const response = await fetchWithTimeout("https://lite.duckduckgo.com/lite/", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -193,12 +193,17 @@ async function searchWithDuckDuckGoHtml(query: string): Promise<SearchEvidence> 
     throw new Error("DuckDuckGo HTML search returned an empty response");
   }
 
-  const matches = [...bodyText.matchAll(/<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)].slice(0, 6);
+  const matches = [...bodyText.matchAll(/<a([^>]*)class=['"]result-link['"]([^>]*)>([\s\S]*?)<\/a>/gi)].slice(0, 6);
   const citations: Citation[] = matches.flatMap((match) => {
-    const [, href, rawTitle] = match;
-    const title = rawTitle.replace(/<[^>]+>/g, "").trim();
+    const rawAttrs = match[1] + match[2];
+    const hrefMatch = rawAttrs.match(/href=['"]([^'"]+)['"]/i);
+    const href = hrefMatch ? hrefMatch[1] : "";
+    if (!href) return [];
+
+    const title = match[3].replace(/<[^>]+>/g, "").trim();
     const normalized = decodeDuckRedirect(href.startsWith("//") ? `https:${href}` : href);
     if (!normalized.startsWith("http")) return [];
+    
     return [
       {
         title: title || extractDomain(normalized),
