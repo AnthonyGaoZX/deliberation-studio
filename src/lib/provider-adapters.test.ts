@@ -130,6 +130,20 @@ describe("provider adapters", () => {
     expect(result.text).toContain("Natural paragraph two.");
   });
 
+  it("returns a readable placeholder instead of throwing when OpenAI returns no readable text", async () => {
+    const openAiParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-5.4-mini",
+    };
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ output: [] })));
+
+    const result = await callProvider(openAiParticipant, [{ role: "user", content: "test" }], false);
+    expect(result.text).toContain("did not return a complete readable answer");
+  });
+
   it("parses Anthropic text blocks cleanly", async () => {
     const anthropicParticipant: ParticipantConfig = {
       ...participant,
@@ -293,6 +307,42 @@ describe("provider adapters", () => {
     expect(result.citations[0]?.url).toBe("https://example.com/page");
   });
 
+  it("retries Gemini with query-param auth when header auth is rejected", async () => {
+    const geminiParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "gemini",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      apiKey: "AIza-demo-key",
+      model: "gemini-3.1-flash-lite",
+    };
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: {
+              message: "Incorrect API key provided.",
+            },
+          },
+          false,
+          401,
+        ),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          candidates: [{ content: { parts: [{ text: "Recovered after retry." }] } }],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await callProvider(geminiParticipant, [{ role: "user", content: "test" }], false);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("?key=AIza-demo-key");
+    expect(result.text).toContain("Recovered after retry.");
+  });
+
   it("sanitizes Gemini api keys and base urls before sending headers", async () => {
     const geminiParticipant: ParticipantConfig = {
       ...participant,
@@ -362,6 +412,28 @@ describe("provider adapters", () => {
 
     expect(payload.max_tokens).toBeUndefined();
     expect(payload.max_completion_tokens).toBeUndefined();
+  });
+
+  it("keeps a high required token ceiling for Anthropic expansive mode", async () => {
+    const anthropicParticipant: ParticipantConfig = {
+      ...participant,
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      model: "claude-sonnet-4-5",
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        content: [{ type: "text", text: "ok" }],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await callProvider(anthropicParticipant, [{ role: "user", content: "test" }], false, false, "expansive");
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const payload = JSON.parse(String(init.body)) as { max_tokens?: number };
+    expect(payload.max_tokens).toBe(4096);
   });
 
   it("surfaces DeepSeek HTTP errors as readable provider errors", async () => {
