@@ -115,11 +115,21 @@ async function searchWithDuckDuckGoInstant(query: string): Promise<SearchEvidenc
     throw new Error(`DuckDuckGo instant search failed: HTTP ${response.status}`);
   }
 
-  const data = (await response.json()) as {
+  const bodyText = await response.text().catch(() => "");
+  if (!bodyText.trim()) {
+    return null;
+  }
+
+  let data: {
     AbstractText?: string;
     AbstractURL?: string;
     RelatedTopics?: Array<{ Text?: string; FirstURL?: string; Topics?: Array<{ Text?: string; FirstURL?: string }> }>;
   };
+  try {
+    data = JSON.parse(bodyText);
+  } catch {
+    return null;
+  }
 
   const nested = (data.RelatedTopics ?? []).flatMap((item) => (item.Topics?.length ? item.Topics : [item]));
   const citations = [
@@ -217,9 +227,19 @@ async function searchWithSearxng(query: string): Promise<SearchEvidence> {
     throw new Error(`Searxng search failed: HTTP ${response.status}`);
   }
 
-  const data = (await response.json()) as {
+  const bodyText = await response.text().catch(() => "");
+  if (!bodyText.trim()) {
+    throw new Error("Searxng returned an empty response");
+  }
+
+  let data: {
     results?: Array<{ title?: string; url?: string; content?: string }>;
   };
+  try {
+    data = JSON.parse(bodyText);
+  } catch {
+    throw new Error("Searxng returned non-JSON content");
+  }
 
   const citations = (data.results ?? [])
     .flatMap((item) =>

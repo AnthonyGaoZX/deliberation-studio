@@ -13,6 +13,9 @@ export type ProviderResult = {
 };
 
 const REQUEST_TIMEOUT_MS = 45_000;
+const PROVIDER_TIMEOUT_MS: Partial<Record<ProviderKind, number>> = {
+  xai: 90_000,
+};
 const UNREADABLE_TEXT_FALLBACK =
   "This round did not return a complete readable answer, so the discussion kept moving with a short placeholder. You can retry this step later if you want a fuller reply.";
 const CITATION_ONLY_FALLBACK =
@@ -135,8 +138,9 @@ export function providerCanUseNativeSearch(participant: ParticipantConfig) {
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, participant: ParticipantConfig) {
+  const timeoutMs = PROVIDER_TIMEOUT_MS[participant.provider] ?? REQUEST_TIMEOUT_MS;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     return await fetch(url, {
@@ -145,7 +149,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, participant: Par
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw makeProviderError(participant, `Request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds.`);
+      throw makeProviderError(participant, `Request timed out after ${timeoutMs / 1000} seconds.`);
     }
 
     throw makeProviderError(participant, stringifyError(error));

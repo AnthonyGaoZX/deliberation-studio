@@ -19,7 +19,7 @@ describe("performSearch", () => {
       vi.fn()
         .mockResolvedValueOnce({
           ok: true,
-          json: async () => ({
+          text: async () => JSON.stringify({
             AbstractText: "",
             RelatedTopics: [],
           }),

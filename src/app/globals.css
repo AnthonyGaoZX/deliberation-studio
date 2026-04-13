@@ -293,6 +293,7 @@ html[data-theme="dark"] .switch-group {
 }
 
 .switch-option {
+  position: relative;
   border: 0;
   border-radius: 9999px;
   padding: 10px 18px;
@@ -303,6 +304,19 @@ html[data-theme="dark"] .switch-group {
   font-weight: 500;
   font-size: 0.95rem;
   transition: all var(--trans-spring);
+  z-index: 1;
+}
+
+.switch-option::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--button-primary-bg);
+  background-size: 200% auto;
+  opacity: 0;
+  z-index: -1;
+  transition: opacity 0.3s ease;
 }
 
 .switch-option:active {
@@ -310,11 +324,13 @@ html[data-theme="dark"] .switch-group {
 }
 
 .switch-option-active {
-  background: var(--button-primary-bg);
-  background-size: 200% auto;
   color: var(--button-primary-text);
   box-shadow: 0 4px 12px rgba(147, 51, 234, 0.3);
   font-weight: 600;
+}
+
+.switch-option-active::before {
+  opacity: 1;
   animation: shine 3s linear infinite reverse;
 }
 
@@ -324,6 +340,7 @@ html[data-theme="dark"] .switch-group {
 
 /* BUTTONS */
 .button {
+  position: relative;
   border: 1px solid transparent;
   border-radius: 9999px;
   padding: 12px 24px;
@@ -335,6 +352,7 @@ html[data-theme="dark"] .switch-group {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  z-index: 1;
 }
 
 .button:hover:not(:disabled) {
@@ -346,8 +364,6 @@ html[data-theme="dark"] .switch-group {
 }
 
 .button-primary {
-  background: var(--button-primary-bg);
-  background-size: 200% auto;
   color: var(--button-primary-text);
   box-shadow: var(--button-primary-shadow);
   border: none;
@@ -356,8 +372,22 @@ html[data-theme="dark"] .switch-group {
   padding: 14px 28px;
 }
 
-.button-primary:hover:not(:disabled) {
+.button-primary::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--button-primary-bg);
+  background-size: 200% auto;
+  z-index: -1;
+  transition: background-position 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.button-primary:hover:not(:disabled)::before {
   background-position: right center;
+}
+
+.button-primary:hover:not(:disabled) {
   box-shadow: 0 15px 30px -5px rgba(147, 51, 234, 0.5);
 }
 

@@ -93,7 +93,7 @@ describe("debate engine search behavior", () => {
     expect(result.sharedSearch?.summary).toBe("Fresh sources were found.");
   });
 
-  it("does not force native search for xAI in shared_once mode", async () => {
+  it("forces native search for xAI in shared_once mode to provide unique citations", async () => {
     const config = buildConfig();
 
     await generateTurn({
@@ -107,7 +107,7 @@ describe("debate engine search behavior", () => {
     });
 
     expect(callProviderMock).toHaveBeenCalledTimes(1);
-    expect(callProviderMock.mock.calls[0]?.[2]).toBe(false);
+    expect(callProviderMock.mock.calls[0]?.[2]).toBe(true);
   });
 
   it("uses native search for xAI in hybrid mode while still carrying shared evidence", async () => {

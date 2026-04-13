@@ -5,7 +5,11 @@ export function shouldCreateSharedSearch(mode: SearchMode) {
 }
 
 export function shouldUseNativeSearch(mode: SearchMode, providerHasNativeSearch: boolean, searchEnabled: boolean, continuePerRound = false) {
-  return searchEnabled && providerHasNativeSearch && (mode === "per_participant" || mode === "hybrid" || continuePerRound);
+  if (!searchEnabled || !providerHasNativeSearch) return false;
+  // Native-search-capable providers should always use their own search for richer, unique results.
+  // In shared_once mode, shared evidence is still injected into the system prompt for context,
+  // but the provider also runs its own native search to produce unique citations.
+  return mode === "per_participant" || mode === "hybrid" || mode === "shared_once" || continuePerRound;
 }
 
 export function shouldUseIndependentSearch(mode: SearchMode, providerHasNativeSearch: boolean, searchEnabled: boolean, continuePerRound = false) {

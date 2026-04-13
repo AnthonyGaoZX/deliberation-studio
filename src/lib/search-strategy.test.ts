@@ -11,7 +11,8 @@ describe("search strategy", () => {
   it("distinguishes native and fallback search correctly", () => {
     expect(shouldUseNativeSearch("per_participant", true, true)).toBe(true);
     expect(shouldUseIndependentSearch("per_participant", false, true)).toBe(true);
-    expect(shouldUseNativeSearch("shared_once", true, true)).toBe(false);
+    // Native-search providers now always use native search for unique citations, even in shared_once
+    expect(shouldUseNativeSearch("shared_once", true, true)).toBe(true);
   });
 
   it("allows continued search in later rounds when explicitly enabled", () => {

@@ -1,4 +1,4 @@
-﻿import { z } from "zod";
+import { z } from "zod";
 import { sanitizeModelText } from "@/lib/citations";
 import { getPersonaPreset } from "@/lib/persona-presets";
 import { sideLabel } from "@/lib/provider-catalog";
@@ -745,14 +745,13 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
   if (input.phase === "score") {
     const searchEvidence = await resolveSearchEvidence(input.config, participant, input.transcript, input.rollingSummary, input.sharedSearch);
     const nativeSearchForScore =
-      (shouldUseNativeSearch(
+      shouldUseNativeSearch(
         input.config.search.mode,
         providerCanUseNativeSearch(participant),
         input.config.search.enabled,
         input.config.search.continuePerRound,
-      )) &&
-      !searchEvidence?.failed &&
-      (input.config.search.mode === "hybrid" || !searchEvidence);
+      ) &&
+      !searchEvidence?.failed;
 
     const result = await callProvider(
       participant,
@@ -828,15 +827,14 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
 
   const searchEvidence = await resolveSearchEvidence(input.config, participant, input.transcript, input.rollingSummary, input.sharedSearch);
   const nativeSearch =
-    (shouldUseNativeSearch(
+    shouldUseNativeSearch(
       input.config.search.mode,
       providerCanUseNativeSearch(participant),
       input.config.search.enabled,
       input.config.search.continuePerRound,
-    )) &&
+    ) &&
     participant.enableSearch &&
-    !searchEvidence?.failed &&
-    (input.config.search.mode === "hybrid" || !searchEvidence);
+    !searchEvidence?.failed;
 
   const result = await callProvider(
     participant,
