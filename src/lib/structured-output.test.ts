@@ -75,6 +75,6 @@ describe("structured output parsing", () => {
   it("builds product-style DeepSeek fallback search text", () => {
     const message = buildSearchFailureMessage("zh", deepseekParticipant);
     expect(message).toContain("DeepSeek");
-    expect(message).toContain("第三方搜索增强");
+    expect(message).toContain("外部搜索增强");
   });
 });

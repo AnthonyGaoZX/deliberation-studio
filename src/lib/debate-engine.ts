@@ -4,7 +4,12 @@ import { getPersonaPreset } from "@/lib/persona-presets";
 import { sideLabel } from "@/lib/provider-catalog";
 import { callProvider, providerCanUseNativeSearch } from "@/lib/provider-adapters";
 import { performSearch } from "@/lib/search-adapter";
-import { shouldCreateSharedSearch, shouldUseNativeSearch } from "@/lib/search-strategy";
+import {
+  shouldCreateSharedSearch,
+  shouldUseIndependentSearch,
+  shouldUseNativeSearch,
+  shouldUseSharedSearchBriefing,
+} from "@/lib/search-strategy";
 import {
   buildJudgeReadableSummary,
   buildModeratorFallback,
@@ -189,7 +194,7 @@ const turnRequestSchema = z.object({
       ),
       contextBlock: z.string(),
       failed: z.boolean(),
-      provider: z.enum(["tavily", "duckduckgo", "searxng", "wikipedia", "none", "native"]).optional(),
+      provider: z.enum(["tavily", "bing", "google_news", "duckduckgo", "searxng", "wikipedia", "none", "native"]).optional(),
       failureReason: z.string().optional(),
     })
     .nullable(),
@@ -214,6 +219,13 @@ const COMMON_RULES = [
   "Separate facts, interpretation, and recommendations.",
   "Actively engage with other participants' arguments. State exactly what you are refuting or supporting.",
 ];
+
+type SearchPlan = {
+  promptEvidence: SearchEvidence | null;
+  displayEvidence: SearchEvidence | null;
+  nativeSearch: boolean;
+  usesSharedBriefing: boolean;
+};
 
 function outputLanguageInstruction(language: DebateConfig["outputLanguage"]) {
   return language === "zh" ? "Write your answer in Simplified Chinese." : "Write your answer in English.";
@@ -512,10 +524,17 @@ function normalizeParticipantTurn(
   round: number,
   rawText: string,
   citations: SearchEvidence["citations"],
-  searchEvidence: SearchEvidence | null,
+  searchPlan: SearchPlan,
 ): DebateTurn {
   const fallbackPosition = participant.stance === "free" ? "neutral" : participant.stance;
   const normalized = normalizeReadableDebaterTurn(rawText, fallbackPosition, config.outputLanguage);
+  const searchSummary = searchPlan.nativeSearch
+    ? buildNativeSearchSummary(config.locale, searchPlan.usesSharedBriefing)
+    : searchPlan.displayEvidence?.failed
+      ? buildSearchFailureMessage(config.locale, participant, searchPlan.displayEvidence.failureReason)
+      : searchPlan.displayEvidence?.summary;
+  const searchProvider = searchPlan.nativeSearch ? "native" : searchPlan.displayEvidence?.provider;
+  const searchFailed = searchPlan.nativeSearch ? false : searchPlan.displayEvidence?.failed;
 
   return {
     id: crypto.randomUUID(),
@@ -531,10 +550,9 @@ function normalizeParticipantTurn(
     interimConclusion: normalized.interimConclusion,
     content: normalized.content,
     citations,
-    searchSummary: searchEvidence?.failed
-      ? buildSearchFailureMessage(config.locale, participant, searchEvidence.failureReason)
-      : searchEvidence?.summary,
-    searchFailed: searchEvidence?.failed,
+    searchSummary,
+    searchFailed,
+    searchProvider,
   };
 }
 
@@ -584,11 +602,15 @@ function normalizeFinalReport(rawText: string, locale: DebateConfig["outputLangu
 }
 
 function buildSearchQuery(config: DebateConfig, participant: ParticipantConfig) {
-  const side = sideLabel(participant.stance, config.locale);
-  const suffix = config.locale === "zh"
-    ? `${side} 相关观点与证据`
-    : `${side} perspective and arguments`;
-  return `${config.topic} ${suffix}`;
+  const suffixByStance: Record<ParticipantConfig["stance"], string> = {
+    support: "supporting evidence arguments",
+    oppose: "counterarguments risks evidence",
+    neutral: "neutral comparison facts evidence",
+    free: "competing viewpoints evidence",
+  };
+  const roleLens = participant.roleName.trim();
+
+  return `${config.topic} ${suffixByStance[participant.stance] ?? "relevant evidence"} ${roleLens}`.trim();
 }
 
 function mergeSearchEvidence(base: SearchEvidence | null, supplement: SearchEvidence): SearchEvidence {
@@ -606,6 +628,34 @@ function mergeSearchEvidence(base: SearchEvidence | null, supplement: SearchEvid
     failed: false,
     provider: supplement.provider ?? base.provider,
   };
+}
+
+function buildSharedSearchBriefing(sharedSearch: SearchEvidence | null): SearchEvidence | null {
+  if (!sharedSearch || sharedSearch.failed) return null;
+
+  return {
+    ...sharedSearch,
+    citations: [],
+    contextBlock: [
+      "Shared briefing summary:",
+      `Summary: ${sharedSearch.summary}`,
+      "Use this only as background context. Run your own search for fresh citations instead of repeating the same source list.",
+    ].join("\n\n"),
+  };
+}
+
+function buildNativeSearchSummary(locale: DebateConfig["locale"], usesSharedBriefing: boolean) {
+  return locale === "zh"
+    ? usesSharedBriefing
+      ? "本轮使用了模型自己的原生联网搜索，并参考了系统提供的共享背景摘要。请以下方本轮实际链接为准。"
+      : "本轮使用了模型自己的原生联网搜索。请以下方本轮实际链接为准。"
+    : usesSharedBriefing
+      ? "This turn used the model's own native web search and a shared background briefing. Trust the links below from this turn itself."
+      : "This turn used the model's own native web search. Trust the links below from this turn itself.";
+}
+
+function hasExternalSearchParticipants(config: DebateConfig) {
+  return config.participants.some((participant) => participant.enableSearch && !providerCanUseNativeSearch(participant));
 }
 
 function buildParticipantCheckMessages(
@@ -651,46 +701,120 @@ function buildParticipantCheckMessages(
   ];
 }
 
-async function resolveSearchEvidence(
+async function resolveSearchPlan(
   config: DebateConfig,
   participant: ParticipantConfig,
-  transcript: DebateTurn[],
-  rollingSummary: string | undefined,
   sharedSearch: SearchEvidence | null,
-) {
+): Promise<SearchPlan> {
   if (!config.search.enabled || config.search.mode === "off" || !participant.enableSearch) {
-    return null;
+    return {
+      promptEvidence: null,
+      displayEvidence: null,
+      nativeSearch: false,
+      usesSharedBriefing: false,
+    };
   }
 
   const supportsNativeSearch = providerCanUseNativeSearch(participant);
+  const nativeSearch = shouldUseNativeSearch(
+    config.search.mode,
+    supportsNativeSearch,
+    config.search.enabled,
+    config.search.continuePerRound,
+  );
   const query = buildSearchQuery(config, participant);
+  const sharedBriefing = shouldUseSharedSearchBriefing(config.search.mode, supportsNativeSearch, config.search.enabled)
+    ? buildSharedSearchBriefing(sharedSearch)
+    : null;
 
   if (config.search.mode === "shared_once") {
-    if (!config.search.continuePerRound) return sharedSearch;
-    if (supportsNativeSearch) return sharedSearch;
+    if (supportsNativeSearch) {
+      return {
+        promptEvidence: sharedBriefing,
+        displayEvidence: null,
+        nativeSearch,
+        usesSharedBriefing: Boolean(sharedBriefing),
+      };
+    }
+
+    if (!config.search.continuePerRound) {
+      return {
+        promptEvidence: sharedSearch,
+        displayEvidence: sharedSearch,
+        nativeSearch: false,
+        usesSharedBriefing: false,
+      };
+    }
+
     const supplement = await performSearch(query, config.search.tavilyApiKey, config.topic);
-    return mergeSearchEvidence(sharedSearch, supplement);
+    const merged = mergeSearchEvidence(sharedSearch, supplement);
+    return {
+      promptEvidence: merged,
+      displayEvidence: merged,
+      nativeSearch: false,
+      usesSharedBriefing: false,
+    };
   }
 
   if (config.search.mode === "per_participant") {
-    if (supportsNativeSearch) return null;
-    return performSearch(query, config.search.tavilyApiKey, config.topic);
+    if (supportsNativeSearch) {
+      return {
+        promptEvidence: null,
+        displayEvidence: null,
+        nativeSearch,
+        usesSharedBriefing: false,
+      };
+    }
+
+    const independent = await performSearch(query, config.search.tavilyApiKey, config.topic);
+    return {
+      promptEvidence: independent,
+      displayEvidence: independent,
+      nativeSearch: false,
+      usesSharedBriefing: false,
+    };
   }
 
   if (config.search.mode === "hybrid") {
-    if (supportsNativeSearch) return sharedSearch;
-    const independent = await performSearch(query, config.search.tavilyApiKey, config.topic);
-    return mergeSearchEvidence(sharedSearch, independent);
+    if (supportsNativeSearch) {
+      return {
+        promptEvidence: sharedBriefing,
+        displayEvidence: null,
+        nativeSearch,
+        usesSharedBriefing: Boolean(sharedBriefing),
+      };
+    }
+
+    const independent = shouldUseIndependentSearch(
+      config.search.mode,
+      supportsNativeSearch,
+      config.search.enabled,
+      config.search.continuePerRound,
+    )
+      ? await performSearch(query, config.search.tavilyApiKey, config.topic)
+      : null;
+    const merged = independent ? mergeSearchEvidence(sharedSearch, independent) : sharedSearch;
+    return {
+      promptEvidence: merged,
+      displayEvidence: merged,
+      nativeSearch: false,
+      usesSharedBriefing: false,
+    };
   }
 
-  return null;
+  return {
+    promptEvidence: null,
+    displayEvidence: null,
+    nativeSearch,
+    usesSharedBriefing: false,
+  };
 }
 
 export async function prepareDebate(raw: unknown) {
   const { config } = z.object({ config: debateConfigSchema }).parse(raw);
   validateConfig(config);
 
-  const sharedSearch = config.search.enabled && shouldCreateSharedSearch(config.search.mode)
+  const sharedSearch = config.search.enabled && shouldCreateSharedSearch(config.search.mode, hasExternalSearchParticipants(config))
     ? await performSearch(config.topic, config.search.tavilyApiKey, config.topic)
     : null;
 
@@ -743,22 +867,15 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
   }
 
   if (input.phase === "score") {
-    const searchEvidence = await resolveSearchEvidence(input.config, participant, input.transcript, input.rollingSummary, input.sharedSearch);
-    const nativeSearchForScore =
-      shouldUseNativeSearch(
-        input.config.search.mode,
-        providerCanUseNativeSearch(participant),
-        input.config.search.enabled,
-        input.config.search.continuePerRound,
-      );
+    const searchPlan = await resolveSearchPlan(input.config, participant, input.sharedSearch);
 
     const result = await callProvider(
       participant,
       [
         { role: "system", content: moderatorSystemPrompt(input.config, participant) },
-        { role: "user", content: scorePrompt(input.config, input.transcript, input.rollingSummary, searchEvidence) },
+        { role: "user", content: scorePrompt(input.config, input.transcript, input.rollingSummary, searchPlan.promptEvidence) },
       ],
-      Boolean(nativeSearchForScore),
+      searchPlan.nativeSearch,
       false,
       input.config.responseLength,
     );
@@ -774,8 +891,8 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
         phase: "score",
         round: input.round,
         keyReason: input.config.locale === "zh" ? "裁判评估" : "Judge evaluation",
-        evidence: searchEvidence?.failed
-          ? buildSearchFailureMessage(input.config.locale, participant, searchEvidence.failureReason)
+        evidence: searchPlan.displayEvidence?.failed
+          ? buildSearchFailureMessage(input.config.locale, participant, searchPlan.displayEvidence.failureReason)
           : input.config.locale === "zh"
             ? "基于当前讨论与可用证据进行判断。"
             : "Judged from the transcript and available evidence.",
@@ -783,9 +900,14 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
         interimConclusion: evaluation.rationale,
         content: sanitizeModelText(result.text) || evaluation.rationale,
         currentPosition: "neutral",
-        citations: result.citations.length ? result.citations : searchEvidence?.citations,
-        searchSummary: searchEvidence?.failed ? buildSearchFailureMessage(input.config.locale, participant, searchEvidence.failureReason) : searchEvidence?.summary,
-        searchFailed: searchEvidence?.failed,
+        citations: result.citations.length ? result.citations : (searchPlan.nativeSearch ? [] : searchPlan.displayEvidence?.citations),
+        searchSummary: searchPlan.nativeSearch
+          ? buildNativeSearchSummary(input.config.locale, searchPlan.usesSharedBriefing)
+          : searchPlan.displayEvidence?.failed
+            ? buildSearchFailureMessage(input.config.locale, participant, searchPlan.displayEvidence.failureReason)
+            : searchPlan.displayEvidence?.summary,
+        searchFailed: searchPlan.nativeSearch ? false : searchPlan.displayEvidence?.failed,
+        searchProvider: searchPlan.nativeSearch ? "native" : searchPlan.displayEvidence?.provider,
         evaluation,
       },
       evaluation,
@@ -824,23 +946,15 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
     };
   }
 
-  const searchEvidence = await resolveSearchEvidence(input.config, participant, input.transcript, input.rollingSummary, input.sharedSearch);
-  const nativeSearch =
-    shouldUseNativeSearch(
-      input.config.search.mode,
-      providerCanUseNativeSearch(participant),
-      input.config.search.enabled,
-      input.config.search.continuePerRound,
-    ) &&
-    participant.enableSearch;
+  const searchPlan = await resolveSearchPlan(input.config, participant, input.sharedSearch);
 
   const result = await callProvider(
     participant,
     [
-      { role: "system", content: participantSystemPrompt(input.config, participant, searchEvidence) },
+      { role: "system", content: participantSystemPrompt(input.config, participant, searchPlan.promptEvidence) },
       { role: "user", content: participantUserPrompt(input.config, participant, input.phase, input.round, input.transcript, input.rollingSummary) },
     ],
-    nativeSearch,
+    searchPlan.nativeSearch,
     false,
     input.config.responseLength,
   );
@@ -852,8 +966,8 @@ export async function generateTurn(raw: unknown): Promise<TurnResponse> {
       input.phase,
       input.round,
       result.text,
-      result.citations.length ? result.citations : (nativeSearch ? [] : (searchEvidence?.citations ?? [])),
-      searchEvidence,
+      result.citations.length ? result.citations : (searchPlan.nativeSearch ? [] : (searchPlan.displayEvidence?.citations ?? [])),
+      searchPlan,
     ),
   };
 }

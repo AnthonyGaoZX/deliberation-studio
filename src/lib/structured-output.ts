@@ -258,7 +258,7 @@ export function buildSearchFailureMessage(locale: Locale, participant: Participa
     if (locale === "zh") {
       return [
         "本轮未成功获取新的网页资料，因此以下内容主要基于模型已有知识生成。",
-        "DeepSeek 在本项目中依赖第三方搜索增强。如果你希望继续联网检索，请检查搜索 API 配置后重新开始。",
+        "DeepSeek 在本项目中依赖外部搜索增强。如果你希望继续联网检索，请检查 Tavily 配置，或稍后重试公开搜索回退源。",
         failureReason ? `可能原因：${failureReason}` : "",
       ]
         .filter(Boolean)
@@ -267,7 +267,7 @@ export function buildSearchFailureMessage(locale: Locale, participant: Participa
 
     return [
       "This round could not fetch fresh web results, so the answer below is based mainly on built-in model knowledge.",
-      "In this app, DeepSeek relies on external search augmentation. If you want live search again, review the search API setup and restart.",
+      "In this app, DeepSeek relies on external search augmentation. If you want live search again, review the Tavily setup or retry later so the public fallback sources can recover.",
       failureReason ? `Possible reason: ${failureReason}` : "",
     ]
       .filter(Boolean)

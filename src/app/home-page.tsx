@@ -8,7 +8,7 @@ import {
   JUDGE_PERSONA_IDS,
   getPersonaPreset,
 } from "@/lib/persona-presets";
-import { createParticipant, PROVIDER_CATALOG, providerSupportsNativeSearch, stanceLabel } from "@/lib/provider-catalog";
+import { createParticipant, PROVIDER_CATALOG, stanceLabel } from "@/lib/provider-catalog";
 import type {
   DebateConfig,
   DebateStance,
@@ -27,9 +27,12 @@ import {
   getDebaterPersonaOptions,
   migrateConfig,
   normalizeParticipantConfig,
+  resolveConfigForRun,
 } from "@/lib/config-logic";
 import { buildCsv, downloadFile } from "@/lib/export-utils";
 import { useDebateSession } from "@/hooks/use-debate-session";
+import { providerCanUseNativeSearch } from "@/lib/provider-adapters";
+import { shouldUseExternalSearchAugmentation } from "@/lib/search-strategy";
 import { ToggleGroup } from "@/components/toggle-group";
 import { Field, ModelVariantField } from "@/components/field";
 import { TrendChart } from "@/components/trend-chart";
@@ -52,6 +55,7 @@ export default function HomePage() {
   const [showHelp, setShowHelp] = useState(false);
 
   const activeConfig = useMemo(() => applyConfigConstraints(draftConfig, locale), [draftConfig, locale]);
+  const runtimeConfig = useMemo(() => resolveConfigForRun(activeConfig, providerConnections), [activeConfig, providerConnections]);
   const helpSections = useMemo(() => buildHelpSnapshot(locale), [locale]);
   const providerHelp = useMemo(() => buildProviderSnapshot(locale), [locale]);
   const singleApiMode = activeConfig.debateMode === "single_model_personas";
@@ -68,6 +72,9 @@ export default function HomePage() {
       session.transcript.flatMap((turn) => {
         const summary = turn.searchSummary?.trim();
         if (!summary) return [];
+        if (turn.searchProvider === "native") {
+          return [turn.id];
+        }
         if (turn.searchFailed || !seen.has(summary)) {
           seen.add(summary);
           return [turn.id];
@@ -78,9 +85,17 @@ export default function HomePage() {
   }, [session.transcript]);
 
   const showExternalSearchField =
-    activeConfig.search.enabled &&
-    activeConfig.search.mode !== "off" &&
-    activeConfig.participants.some((participant) => participant.provider === "deepseek");
+    runtimeConfig.search.enabled &&
+    runtimeConfig.search.mode !== "off" &&
+    runtimeConfig.participants.some(
+      (participant) =>
+        participant.enableSearch &&
+        shouldUseExternalSearchAugmentation(
+          runtimeConfig.search.mode,
+          providerCanUseNativeSearch(participant),
+          runtimeConfig.search.enabled,
+        ),
+    );
 
   const readerStyle = useMemo<CSSProperties>(
     () =>
@@ -91,6 +106,32 @@ export default function HomePage() {
         "--reader-width": `${textWidth}ch`,
       }) as CSSProperties,
     [fontSize, lineHeight, paragraphGap, textWidth],
+  );
+  const runtimeNativeSearchSupport = useMemo(
+    () =>
+      providerKinds.reduce(
+        (accumulator, kind) => {
+          const connection = providerConnections[kind];
+          accumulator[kind] = providerCanUseNativeSearch({
+            id: `search-capability-${kind}`,
+            provider: kind,
+            label: PROVIDER_CATALOG[kind].label[locale],
+            roleName: "Capability",
+            stance: "neutral",
+            model: PROVIDER_CATALOG[kind].defaultModel,
+            apiKey: connection?.apiKey ?? "",
+            baseUrl: connection?.baseUrl ?? PROVIDER_CATALOG[kind].defaultBaseUrl,
+            enableSearch: true,
+            persona: "balanced_standard",
+            personaDescription: "",
+            includeInFinalSummary: true,
+            systemPrompt: "",
+          });
+          return accumulator;
+        },
+        {} as Record<ProviderKind, boolean>,
+      ),
+    [locale, providerConnections],
   );
 
   useEffect(() => {
@@ -432,7 +473,7 @@ export default function HomePage() {
                     <strong>{meta.label[locale]}</strong>
                     <p className="muted">{meta.shortDescription[locale]}</p>
                     <div className="search-capability-row">
-                      {providerSupportsNativeSearch(kind) ? (
+                      {runtimeNativeSearchSupport[kind] ? (
                         <span className="search-badge search-badge-native">
                           ✦ {text(locale, "原生联网搜索", "Native web search")}
                         </span>
@@ -449,20 +490,21 @@ export default function HomePage() {
                         </strong>
                         {text(
                           locale,
-                          "DeepSeek 本身不内置联网能力。开启联网时，系统会依次尝试以下搜索来源：",
-                          "DeepSeek has no built-in web search. When search is enabled, the system tries these sources in order:",
+                          "DeepSeek 本身不内置联网能力。开启联网时，它会走外部搜索增强；而 OpenAI、Claude、Gemini 和 Grok 会优先走各自原生联网。",
+                          "DeepSeek has no built-in web search. When search is enabled it uses external search augmentation, while OpenAI, Claude, Gemini, and Grok prefer their own native web search first.",
                         )}
                         <ol style={{ margin: "6px 0 0 16px", padding: 0, lineHeight: 1.8 }}>
-                          <li>{text(locale, "Tavily（付费精准，推荐优先）", "Tavily (accurate, recommended — fill key above)")}</li>
-                          <li>{text(locale, "Wikipedia 公开 API（免费，无封锁）", "Wikipedia open API (free, always reachable)")}</li>
-                          <li>{text(locale, "DuckDuckGo Lite（部分地区可用）", "DuckDuckGo Lite (region-dependent)")}</li>
-                          <li>{text(locale, "SearXNG（备用）", "SearXNG (last resort)")}</li>
+                          <li>{text(locale, "Tavily（推荐优先，结果更稳）", "Tavily (recommended first, most reliable)")}</li>
+                          <li>{text(locale, "Bing RSS（免费公开结果）", "Bing RSS (free public results)")}</li>
+                          <li>{text(locale, "Google News RSS（免费公开新闻结果）", "Google News RSS (free public news results)")}</li>
+                          <li>{text(locale, "Wikipedia 公开 API（百科补充）", "Wikipedia open API (encyclopedic fallback)")}</li>
+                          <li>{text(locale, "DuckDuckGo Lite / SearXNG（最后兜底）", "DuckDuckGo Lite / SearXNG (last-resort fallback)")}</li>
                         </ol>
                         <div style={{ marginTop: 8 }}>
                           {text(
                             locale,
-                            "不填 Tavily Key 时，系统会自动回退到 Wikipedia 等公开接口。Tavily 免费套餐每月 1000 次，通常足够日常使用。",
-                            "Without a Tavily key the system automatically falls back to Wikipedia. Tavily's free plan offers 1,000 searches/month — enough for most sessions.",
+                            "不填 Tavily Key 时，系统会自动回退到 Bing RSS、Google News RSS、Wikipedia 等免费公开接口。能用，但稳定性和查证质量通常不如 Tavily。",
+                            "Without a Tavily key the system automatically falls back to free public sources such as Bing RSS, Google News RSS, and Wikipedia. It still works, but Tavily is usually more reliable.",
                           )}
                         </div>
                       </div>
@@ -1109,8 +1151,8 @@ export default function HomePage() {
                     label={text(locale, "联网策略", "Search strategy")}
                     hint={text(
                       locale,
-                      "统一一次适合快速起步；独立搜索适合看不同查证路径；混合模式先共享后补充。",
-                      "Shared-once is fastest to start; per-role search explores divergent evidence paths; hybrid shares first, then expands.",
+                      "统一一次适合快速起步；独立搜索适合看不同查证路径；混合模式先共享摘要后各自补充。支持原生联网的模型会优先走自己的原生搜索。",
+                      "Shared-once is fastest to start; per-role search explores divergent evidence paths; hybrid shares a briefing first and then expands. Native-search providers still prefer their own built-in search.",
                     )}
                   >
                     <select
@@ -1207,13 +1249,13 @@ export default function HomePage() {
                     label={text(locale, "Tavily 搜索 API Key（推荐填写 · 免费注册）", "Tavily Search API Key — Recommended · Free signup")}
                     hint={text(
                       locale,
-                      "DeepSeek 没有内置联网能力。填写此 Key 后，DeepSeek 可稳定访问互联网，引用质量明显提升。不填时系统会自动回退到 Wikipedia 等免费公开接口，但搜索质量和稳定性有所下降。免费套餐每月 1000 次，注册地址：https://app.tavily.com/",
-                      "DeepSeek has no built-in web access. With this key DeepSeek gets reliable live search and higher-quality citations. Without it the system auto-falls back to Wikipedia and other public APIs — functional but less accurate. Free plan: 1,000 searches/month. Sign up at https://app.tavily.com/",
+                      "只有当前配置里存在需要外部搜索增强的角色时，才需要这项。填写后，DeepSeek 等非原生联网角色会更稳定地获取实时资料；不填时系统会自动回退到 Bing RSS、Google News RSS、Wikipedia 等公开接口。",
+                      "This is only needed when the current setup includes roles that require external search augmentation. With it, non-native-search roles like DeepSeek get more reliable live retrieval; without it the app falls back to public sources such as Bing RSS, Google News RSS, and Wikipedia.",
                     )}
                   >
                     <input
                       value={activeConfig.search.tavilyApiKey ?? ""}
-                      placeholder={text(locale, "tvly-… (可选，不填则自动回退到 Wikipedia)", "tvly-… (optional — falls back to Wikipedia automatically)")}
+                      placeholder={text(locale, "tvly-…（可选，不填则自动回退到免费公开搜索）", "tvly-… (optional — falls back to free public search)")}
                       onChange={(event) =>
                         updateDraft((current) => ({ ...current, search: { ...current.search, tavilyApiKey: event.target.value } }))
                       }
@@ -1363,7 +1405,7 @@ export default function HomePage() {
                     </div>
                     {turn.searchSummary && visibleSearchSummaryTurnIds.has(turn.id) ? (
                       <p className={turn.searchFailed ? "score-note" : "search-note"}>
-                        {turn.searchFailed
+                        {turn.searchFailed || turn.searchProvider === "native"
                           ? turn.searchSummary
                           : text(
                               locale,

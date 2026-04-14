@@ -107,12 +107,12 @@ export const HELP_SECTIONS: HelpSection[] = [
     body: {
       zh: [
         "你可以选择不联网、统一搜索一次、每位角色独立搜索，或者混合模式。",
-        "Grok 支持原生联网搜索；DeepSeek 在本项目中通过外部搜索增强来联网。",
+        "OpenAI、Claude、Gemini 和 Grok 会优先使用各自的原生联网；DeepSeek 会通过外部搜索增强联网。",
         "如果某一轮联网失败，系统会明确告诉你“本轮主要基于模型已有知识生成”，而不是让整场讨论直接崩掉。",
       ],
       en: [
         "You can choose no search, shared-once search, per-role search, or hybrid mode.",
-        "Grok supports native search. In this project, DeepSeek uses external search augmentation.",
+        "OpenAI, Claude, Gemini, and Grok prefer their own native web search first. DeepSeek uses external search augmentation.",
         "If a search step fails, the app clearly tells you that the round relied mainly on built-in model knowledge instead of crashing the whole session.",
       ],
     },

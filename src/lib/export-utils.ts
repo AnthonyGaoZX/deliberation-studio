@@ -2,7 +2,7 @@ import type { DebateTurn } from "@/types/debate";
 
 export function buildCsv(transcript: DebateTurn[]) {
   return [
-    ["round", "phase", "speaker", "role", "position", "reason", "evidence", "response", "conclusion"].join(","),
+    ["round", "phase", "speaker", "role", "position", "search_provider", "search_failed", "reason", "evidence", "response", "conclusion"].join(","),
     ...transcript.map((turn) =>
       [
         turn.round,
@@ -10,6 +10,8 @@ export function buildCsv(transcript: DebateTurn[]) {
         `"${turn.speaker}"`,
         `"${turn.roleName}"`,
         `"${turn.currentPosition ?? ""}"`,
+        `"${turn.searchProvider ?? ""}"`,
+        `"${turn.searchFailed ? "yes" : "no"}"`,
         `"${turn.keyReason.replaceAll('"', '""')}"`,
         `"${turn.evidence.replaceAll('"', '""')}"`,
         `"${turn.responseToOthers.replaceAll('"', '""')}"`,

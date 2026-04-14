@@ -140,7 +140,7 @@ export type SearchEvidence = {
   citations: Citation[];
   contextBlock: string;
   failed: boolean;
-  provider?: "tavily" | "duckduckgo" | "searxng" | "wikipedia" | "none" | "native";
+  provider?: "tavily" | "bing" | "google_news" | "duckduckgo" | "searxng" | "wikipedia" | "none" | "native";
   failureReason?: string;
 };
 
@@ -164,6 +164,7 @@ export type DebateTurn = {
   citations?: Citation[];
   searchSummary?: string;
   searchFailed?: boolean;
+  searchProvider?: SearchEvidence["provider"];
   evaluation?: RoundEvaluation;
 };
 

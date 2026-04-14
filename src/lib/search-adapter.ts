@@ -1,7 +1,8 @@
 import { extractDomain } from "@/lib/citations";
 import type { Citation, SearchEvidence } from "@/types/debate";
 
-const REQUEST_TIMEOUT_MS = 30000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RESULTS = 6;
 
 async function fetchWithTimeout(url: string, init: RequestInit) {
   const controller = new AbortController();
@@ -51,6 +52,52 @@ function sanitizeSearchQuery(query: string, fallbackQuery?: string) {
   return "latest public information about the current debate topic";
 }
 
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripHtml(value: string) {
+  return decodeHtmlEntities(value.replace(/<[^>]+>/g, " "));
+}
+
+function cleanXmlText(value: string | undefined) {
+  return value ? stripHtml(value) : "";
+}
+
+function parseRssItems(xml: string) {
+  return [...xml.matchAll(/<item\b[\s\S]*?>([\s\S]*?)<\/item>/gi)].map((match) => match[1]);
+}
+
+function extractXmlTag(item: string, tagName: string) {
+  return item.match(new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, "i"))?.[1];
+}
+
+function decodeDuckRedirect(url: string) {
+  try {
+    const parsed = new URL(url, "https://duckduckgo.com");
+    const encoded = parsed.searchParams.get("uddg");
+    return encoded ? decodeURIComponent(encoded) : url;
+  } catch {
+    return url;
+  }
+}
+
+function normalizeSearchFailure(reason: string) {
+  return reason
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+\./g, ".")
+    .trim();
+}
+
 export async function searchWithTavily(query: string, apiKey: string): Promise<SearchEvidence> {
   const response = await fetchWithTimeout("https://api.tavily.com/search", {
     method: "POST",
@@ -62,7 +109,7 @@ export async function searchWithTavily(query: string, apiKey: string): Promise<S
       api_key: apiKey,
       query,
       search_depth: "advanced",
-      max_results: 6,
+      max_results: MAX_RESULTS,
       include_answer: true,
       include_raw_content: false,
     }),
@@ -90,7 +137,7 @@ export async function searchWithTavily(query: string, apiKey: string): Promise<S
           ]
         : [],
     )
-    .slice(0, 6);
+    .slice(0, MAX_RESULTS);
 
   return buildEvidence(
     data.answer?.trim() || "The search returned useful sources, but no short answer summary was available.",
@@ -99,125 +146,91 @@ export async function searchWithTavily(query: string, apiKey: string): Promise<S
   );
 }
 
-async function searchWithDuckDuckGoInstant(query: string): Promise<SearchEvidence | null> {
-  const response = await fetchWithTimeout(
-    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
-    {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "DeliberationStudio/1.0",
-      },
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(`DuckDuckGo instant search failed: HTTP ${response.status}`);
-  }
-
-  const bodyText = await response.text().catch(() => "");
-  if (!bodyText.trim()) {
-    return null;
-  }
-
-  let data: {
-    AbstractText?: string;
-    AbstractURL?: string;
-    RelatedTopics?: Array<{ Text?: string; FirstURL?: string; Topics?: Array<{ Text?: string; FirstURL?: string }> }>;
-  };
-  try {
-    data = JSON.parse(bodyText);
-  } catch {
-    return null;
-  }
-
-  const nested = (data.RelatedTopics ?? []).flatMap((item) => (item.Topics?.length ? item.Topics : [item]));
-  const citations = [
-    data.AbstractURL
-      ? {
-          title: extractDomain(data.AbstractURL),
-          url: data.AbstractURL,
-          domain: extractDomain(data.AbstractURL),
-          snippet: data.AbstractText,
-        }
-      : null,
-    ...nested.slice(0, 5).map((item) =>
-      item.FirstURL
-        ? {
-            title: extractDomain(item.FirstURL),
-            url: item.FirstURL,
-            domain: extractDomain(item.FirstURL),
-            snippet: item.Text,
-          }
-        : null,
-    ),
-  ].filter(Boolean) as Citation[];
-
-  if (!citations.length && !data.AbstractText?.trim()) {
-    return null;
-  }
-
-  return buildEvidence(
-    data.AbstractText?.trim() || "A lightweight web lookup found related public sources.",
-    citations,
-    "duckduckgo",
-  );
-}
-
-function decodeDuckRedirect(url: string) {
-  try {
-    const parsed = new URL(url, "https://duckduckgo.com");
-    const encoded = parsed.searchParams.get("uddg");
-    return encoded ? decodeURIComponent(encoded) : url;
-  } catch {
-    return url;
-  }
-}
-
-async function searchWithDuckDuckGoHtml(query: string): Promise<SearchEvidence> {
-  const response = await fetchWithTimeout("https://lite.duckduckgo.com/lite/", {
-    method: "POST",
+async function searchWithBingRss(query: string): Promise<SearchEvidence> {
+  const response = await fetchWithTimeout(`https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`, {
+    method: "GET",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     },
-    body: `q=${encodeURIComponent(query)}`,
   });
 
   if (!response.ok) {
-    throw new Error(`DuckDuckGo HTML search failed: HTTP ${response.status}`);
+    throw new Error(`Bing RSS search failed: HTTP ${response.status}`);
   }
 
-  const bodyText = await response.text().catch(() => "");
-  if (!bodyText.trim()) {
-    throw new Error("DuckDuckGo HTML search returned an empty response");
+  const xml = await response.text().catch(() => "");
+  if (!xml.trim()) {
+    throw new Error("Bing RSS search returned an empty response");
   }
 
-  const matches = [...bodyText.matchAll(/<a([^>]*)class=['"]result-link['"]([^>]*)>([\s\S]*?)<\/a>/gi)].slice(0, 6);
-  const citations: Citation[] = matches.flatMap((match) => {
-    const rawAttrs = match[1] + match[2];
-    const hrefMatch = rawAttrs.match(/href=['"]([^'"]+)['"]/i);
-    const href = hrefMatch ? hrefMatch[1] : "";
-    if (!href) return [];
+  const citations = parseRssItems(xml)
+    .flatMap((item) => {
+      const url = cleanXmlText(extractXmlTag(item, "link"));
+      if (!url.startsWith("http")) return [];
 
-    const title = match[3].replace(/<[^>]+>/g, "").trim();
-    const normalized = decodeDuckRedirect(href.startsWith("//") ? `https:${href}` : href);
-    if (!normalized.startsWith("http")) return [];
-    
-    return [
-      {
-        title: title || extractDomain(normalized),
-        url: normalized,
-        domain: extractDomain(normalized),
-      },
-    ];
-  });
+      return [
+        {
+          title: cleanXmlText(extractXmlTag(item, "title")) || extractDomain(url),
+          url,
+          domain: extractDomain(url),
+          snippet: cleanXmlText(extractXmlTag(item, "description")),
+        },
+      ];
+    })
+    .slice(0, MAX_RESULTS);
 
   if (!citations.length) {
-    throw new Error("DuckDuckGo HTML search returned no readable results");
+    throw new Error("Bing RSS search returned no readable results");
   }
 
-  return buildEvidence("A web lookup found public pages relevant to this question.", citations, "duckduckgo");
+  return buildEvidence("A public Bing RSS lookup found live pages related to this topic.", citations, "bing");
+}
+
+async function searchWithGoogleNewsRss(query: string): Promise<SearchEvidence> {
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`;
+  const response = await fetchWithTimeout(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Google News RSS search failed: HTTP ${response.status}`);
+  }
+
+  const xml = await response.text().catch(() => "");
+  if (!xml.trim()) {
+    throw new Error("Google News RSS search returned an empty response");
+  }
+
+  const citations = parseRssItems(xml)
+    .flatMap((item) => {
+      const link = cleanXmlText(extractXmlTag(item, "link"));
+      if (!link.startsWith("http")) return [];
+
+      const sourceUrl = item.match(/<source\b[^>]*url="([^"]+)"/i)?.[1];
+      const sourceName = cleanXmlText(extractXmlTag(item, "source"));
+      const domain = sourceUrl ? extractDomain(sourceUrl) : extractDomain(link);
+
+      return [
+        {
+          title: cleanXmlText(extractXmlTag(item, "title")) || sourceName || domain,
+          url: link,
+          domain,
+          snippet: cleanXmlText(extractXmlTag(item, "description")),
+        },
+      ];
+    })
+    .slice(0, MAX_RESULTS);
+
+  if (!citations.length) {
+    throw new Error("Google News RSS search returned no readable results");
+  }
+
+  return buildEvidence("A public Google News RSS lookup found recent reporting related to this topic.", citations, "google_news");
 }
 
 async function searchWithWikipedia(query: string): Promise<SearchEvidence> {
@@ -242,14 +255,14 @@ async function searchWithWikipedia(query: string): Promise<SearchEvidence> {
   };
 
   const citations = (data.query?.search ?? [])
-    .slice(0, 6)
+    .slice(0, MAX_RESULTS)
     .map((item) => {
       const url = `https://en.wikipedia.org/?curid=${item.pageid}`;
       return {
         title: item.title,
         url,
         domain: "en.wikipedia.org",
-        snippet: item.snippet.replace(/<\/?span[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&#039;/g, "'"),
+        snippet: stripHtml(item.snippet),
       };
     });
 
@@ -260,17 +273,64 @@ async function searchWithWikipedia(query: string): Promise<SearchEvidence> {
   return buildEvidence("A Wikipedia search found encyclopedic details.", citations, "wikipedia");
 }
 
-async function searchWithSearxng(query: string): Promise<SearchEvidence> {
-  const response = await fetchWithTimeout(
-    `https://searx.be/search?q=${encodeURIComponent(query)}&format=json&language=en`,
-    {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "DeliberationStudio/1.0",
-      },
+async function searchWithDuckDuckGoHtml(query: string): Promise<SearchEvidence> {
+  const response = await fetchWithTimeout("https://lite.duckduckgo.com/lite/", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
     },
-  );
+    body: `q=${encodeURIComponent(query)}`,
+  });
+
+  if (!response.ok) {
+    throw new Error(`DuckDuckGo HTML search failed: HTTP ${response.status}`);
+  }
+
+  const bodyText = await response.text().catch(() => "");
+  if (!bodyText.trim()) {
+    throw new Error("DuckDuckGo HTML search returned an empty response");
+  }
+
+  if (/anomaly-modal|Unfortunately,\s*bots use DuckDuckGo too/i.test(bodyText)) {
+    throw new Error("DuckDuckGo lite returned an anti-bot challenge");
+  }
+
+  const matches = [...bodyText.matchAll(/<a([^>]*)class=['"]result-link['"]([^>]*)>([\s\S]*?)<\/a>/gi)].slice(0, MAX_RESULTS);
+  const citations: Citation[] = matches.flatMap((match) => {
+    const rawAttrs = `${match[1]} ${match[2]}`;
+    const href = rawAttrs.match(/href=['"]([^'"]+)['"]/i)?.[1] ?? "";
+    if (!href) return [];
+
+    const normalized = decodeDuckRedirect(href.startsWith("//") ? `https:${href}` : href);
+    if (!normalized.startsWith("http")) return [];
+
+    return [
+      {
+        title: stripHtml(match[3]) || extractDomain(normalized),
+        url: normalized,
+        domain: extractDomain(normalized),
+      },
+    ];
+  });
+
+  if (!citations.length) {
+    throw new Error("DuckDuckGo HTML search returned no readable results");
+  }
+
+  return buildEvidence("A DuckDuckGo Lite lookup found public pages relevant to this question.", citations, "duckduckgo");
+}
+
+async function searchWithSearxng(query: string): Promise<SearchEvidence> {
+  const response = await fetchWithTimeout(`https://searx.be/search?q=${encodeURIComponent(query)}&format=json&language=en`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "DeliberationStudio/1.0",
+    },
+  });
 
   if (!response.ok) {
     throw new Error(`Searxng search failed: HTTP ${response.status}`);
@@ -303,7 +363,7 @@ async function searchWithSearxng(query: string): Promise<SearchEvidence> {
           ]
         : [],
     )
-    .slice(0, 6);
+    .slice(0, MAX_RESULTS);
 
   if (!citations.length) {
     throw new Error("Searxng returned no readable results");
@@ -312,64 +372,46 @@ async function searchWithSearxng(query: string): Promise<SearchEvidence> {
   return buildEvidence("A metasearch lookup returned public pages related to this topic.", citations, "searxng");
 }
 
-export async function searchWithDuckDuckGo(query: string): Promise<SearchEvidence> {
-  const instant = await searchWithDuckDuckGoInstant(query);
-  if (instant) return instant;
-  return searchWithDuckDuckGoHtml(query);
+async function performPublicSearch(query: string, preferredFailureReason?: string): Promise<SearchEvidence> {
+  const providers: Array<() => Promise<SearchEvidence>> = [
+    () => searchWithBingRss(query),
+    () => searchWithGoogleNewsRss(query),
+    () => searchWithWikipedia(query),
+    () => searchWithDuckDuckGoHtml(query),
+    () => searchWithSearxng(query),
+  ];
+
+  let lastReason = preferredFailureReason ?? "";
+
+  for (const provider of providers) {
+    try {
+      return await provider();
+    } catch (error) {
+      lastReason = error instanceof Error ? error.message : "Public search fallback failed";
+    }
+  }
+
+  return {
+    summary: "This round could not fetch fresh web results.",
+    citations: [],
+    contextBlock: "Web search failed for this round.",
+    failed: true,
+    provider: "none",
+    failureReason: normalizeSearchFailure(lastReason || "Search fallback failed"),
+  };
 }
 
 export async function performSearch(query: string, tavilyApiKey?: string, fallbackQuery?: string): Promise<SearchEvidence> {
   const sanitizedQuery = sanitizeSearchQuery(query, fallbackQuery);
 
-  try {
-    if (tavilyApiKey?.trim()) {
-      return await searchWithTavily(sanitizedQuery, tavilyApiKey.trim());
-    }
-  } catch (error) {
-    // Tavily failed — continue to public fallback chain (Wikipedia first, most reliable in CN)
-    const reason = error instanceof Error ? error.message : "Tavily search failed";
+  if (tavilyApiKey?.trim()) {
     try {
-      return await searchWithWikipedia(sanitizedQuery);
-    } catch {
-      try {
-        return await searchWithDuckDuckGo(sanitizedQuery);
-      } catch {
-        try {
-          return await searchWithSearxng(sanitizedQuery);
-        } catch {
-          return {
-            summary: "This round could not fetch fresh web results.",
-            citations: [],
-            contextBlock: "Web search failed for this round.",
-            failed: true,
-            provider: "none",
-            failureReason: reason,
-          };
-        }
-      }
+      return await searchWithTavily(sanitizedQuery, tavilyApiKey.trim());
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : "Tavily search failed";
+      return performPublicSearch(sanitizedQuery, reason);
     }
   }
 
-  // Wikipedia is the most reliably reachable public API (no bot-blocking, no GFW issues).
-  // Try it first, then fall back to DuckDuckGo and SearXNG.
-  try {
-    return await searchWithWikipedia(sanitizedQuery);
-  } catch (wikiError) {
-    try {
-      return await searchWithDuckDuckGo(sanitizedQuery);
-    } catch {
-      try {
-        return await searchWithSearxng(sanitizedQuery);
-      } catch {
-        return {
-          summary: "This round could not fetch fresh web results.",
-          citations: [],
-          contextBlock: "Web search failed for this round.",
-          failed: true,
-          provider: "none",
-          failureReason: wikiError instanceof Error ? wikiError.message : "Search fallback failed",
-        };
-      }
-    }
-  }
+  return performPublicSearch(sanitizedQuery);
 }

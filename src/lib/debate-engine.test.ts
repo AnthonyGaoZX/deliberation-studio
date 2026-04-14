@@ -7,7 +7,8 @@ const performSearchMock = vi.fn();
 
 vi.mock("@/lib/provider-adapters", () => ({
   callProvider: (...args: unknown[]) => callProviderMock(...args),
-  providerCanUseNativeSearch: (participant: { provider?: string }) => participant.provider === "xai",
+  providerCanUseNativeSearch: (participant: { provider?: string }) =>
+    ["openai", "anthropic", "gemini", "xai"].includes(participant.provider ?? ""),
 }));
 
 vi.mock("@/lib/search-adapter", () => ({
@@ -73,7 +74,7 @@ const sharedSearch: SearchEvidence = {
   citations: [{ title: "Example", url: "https://example.com", domain: "example.com", snippet: "snippet" }],
   contextBlock: "Shared evidence block",
   failed: false,
-  provider: "duckduckgo",
+  provider: "bing",
 };
 
 describe("debate engine search behavior", () => {
@@ -84,13 +85,13 @@ describe("debate engine search behavior", () => {
     performSearchMock.mockResolvedValue(sharedSearch);
   });
 
-  it("still prepares shared search for xAI when the user chooses shared_once", async () => {
+  it("skips shared external search when every participant has native search", async () => {
     const config = buildConfig();
 
     const result = await prepareDebate({ config });
 
-    expect(performSearchMock).toHaveBeenCalledTimes(1);
-    expect(result.sharedSearch?.summary).toBe("Fresh sources were found.");
+    expect(performSearchMock).not.toHaveBeenCalled();
+    expect(result.sharedSearch).toBeNull();
   });
 
   it("forces native search for xAI in shared_once mode to provide unique citations", async () => {
@@ -112,6 +113,25 @@ describe("debate engine search behavior", () => {
 
   it("uses native search for xAI in hybrid mode while still carrying shared evidence", async () => {
     const config = buildConfig({
+      participants: [
+        buildParticipant(),
+        buildParticipant({
+          id: "deepseek-1",
+          provider: "deepseek",
+          label: "DeepSeek 1",
+          roleName: "Oppose",
+          stance: "oppose",
+          model: "deepseek-chat",
+          baseUrl: "https://api.deepseek.com",
+        }),
+        buildParticipant({
+          id: "judge",
+          label: "Neutral judge",
+          roleName: "Judge",
+          stance: "neutral",
+          persona: "objective_judge",
+        }),
+      ],
       search: {
         enabled: true,
         mode: "hybrid",
@@ -134,6 +154,55 @@ describe("debate engine search behavior", () => {
     expect(callProviderMock.mock.calls[0]?.[2]).toBe(true);
 
     const messages = callProviderMock.mock.calls[0]?.[1] as Array<{ role: string; content: string }>;
+    expect(messages[0]?.content).toContain("Shared briefing summary");
+    expect(messages[0]?.content).not.toContain("URL: https://example.com");
+  });
+
+  it("keeps external search available for DeepSeek without Tavily in per-role mode", async () => {
+    const config = buildConfig({
+      participants: [
+        buildParticipant({
+          id: "deepseek-1",
+          provider: "deepseek",
+          label: "DeepSeek 1",
+          roleName: "Support",
+          stance: "support",
+          model: "deepseek-chat",
+          baseUrl: "https://api.deepseek.com",
+        }),
+        buildParticipant({
+          id: "judge",
+          label: "Neutral judge",
+          roleName: "Judge",
+          stance: "neutral",
+          persona: "objective_judge",
+          provider: "deepseek",
+          model: "deepseek-chat",
+          baseUrl: "https://api.deepseek.com",
+        }),
+      ],
+      search: {
+        enabled: true,
+        mode: "per_participant",
+        continuePerRound: false,
+        tavilyApiKey: "",
+      },
+    });
+
+    await generateTurn({
+      config,
+      participantId: "deepseek-1",
+      phase: "opening",
+      round: 1,
+      transcript: [],
+      rollingSummary: "",
+      sharedSearch: null,
+    });
+
+    expect(performSearchMock).toHaveBeenCalledTimes(1);
+    expect(callProviderMock.mock.calls[0]?.[2]).toBe(false);
+    const messages = callProviderMock.mock.calls[0]?.[1] as Array<{ role: string; content: string }>;
+    expect(messages[0]?.content).toContain("Search evidence for this round");
     expect(messages[0]?.content).toContain("Shared evidence block");
   });
 

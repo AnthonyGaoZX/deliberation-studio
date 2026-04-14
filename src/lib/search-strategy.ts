@@ -1,7 +1,7 @@
 import type { SearchMode } from "@/types/debate";
 
-export function shouldCreateSharedSearch(mode: SearchMode) {
-  return mode === "shared_once" || mode === "hybrid";
+export function shouldCreateSharedSearch(mode: SearchMode, hasExternalSearchParticipants = true) {
+  return hasExternalSearchParticipants && (mode === "shared_once" || mode === "hybrid");
 }
 
 export function shouldUseNativeSearch(mode: SearchMode, providerHasNativeSearch: boolean, searchEnabled: boolean, continuePerRound = false) {
@@ -14,4 +14,20 @@ export function shouldUseNativeSearch(mode: SearchMode, providerHasNativeSearch:
 
 export function shouldUseIndependentSearch(mode: SearchMode, providerHasNativeSearch: boolean, searchEnabled: boolean, continuePerRound = false) {
   return searchEnabled && !providerHasNativeSearch && (mode === "per_participant" || mode === "hybrid" || continuePerRound);
+}
+
+export function shouldUseExternalSearchAugmentation(
+  mode: SearchMode,
+  providerHasNativeSearch: boolean,
+  searchEnabled: boolean,
+) {
+  return searchEnabled && mode !== "off" && !providerHasNativeSearch;
+}
+
+export function shouldUseSharedSearchBriefing(
+  mode: SearchMode,
+  providerHasNativeSearch: boolean,
+  searchEnabled: boolean,
+) {
+  return searchEnabled && providerHasNativeSearch && (mode === "shared_once" || mode === "hybrid");
 }
